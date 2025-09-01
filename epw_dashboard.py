@@ -111,57 +111,36 @@ with tab_single:
             st.caption("Parquet export unavailable (install pyarrow if needed).")
     
     
-    ## KPIs for Dry & Wet bulb
-    st.markdown("### Summary Statistics")
-    
-    available_cols = list(df.columns)
-    
-    dry_col = find_col_kpi(df,"dry_bulb_temperature", "dry bulb")
-    dew_col = find_col_kpi(df,"dew_point_temperature", "dew point")
-    rh_col  = find_col_kpi(df,"relative_humidity","rh")
-    ws_col  = find_col_kpi(df,"wind_speed", "wind speed")
-    wd_col  = find_col_kpi(df,"wind_direction", "wind direction")
-    dni_col = find_col_kpi(df,"direct_normal_radiation", "dni")
-    ghi_col = find_col_kpi(df,"global_horizontal_radiation", "ghi")
-    pr_col = find_col_kpi(df,"liquid_precipitation_quantity", "pr")
-    
-        # --- Build the grid as pairs (left metric, right metric) -> each row has 6 KPI slots ---
-    pairs = [
-        (("Dry Bulb Temperature",        series_or_none(df,dry_col), "°C"),
-         ("Dew Point Temperature",   series_or_none(df,dew_col), "°C")),
-        (("Wind Speed", series_or_none(df,ws_col),  "m/s"),
-         ("Wind Direction",   series_or_none(df,wd_col),  "°")),
-        (("Direct Normal Radiation", series_or_none(df,dni_col), "Wh/m²"),
-         ("Global Horizontal Rad.",  series_or_none(df,ghi_col), "Wh/m²")),
-    ]
-    
-    
-    for (left_label, left_s, left_unit), (right_label, right_s, right_unit) in pairs:
-        row = st.columns(6)
-        emit_triplet(row, 0, left_label,  left_s,  left_unit)
-        emit_triplet(row, 3, right_label, right_s, right_unit)
+    with st.container(border=True):
+        ## KPI Pane
+        st.markdown("### Summary Statistics")
+        
+        available_cols = list(df.columns)
+        dry_col = find_col_kpi(df,"dry_bulb_temperature", "dry bulb")
+        dew_col = find_col_kpi(df,"dew_point_temperature", "dew point")
+        rh_col  = find_col_kpi(df,"relative_humidity","rh")
+        ws_col  = find_col_kpi(df,"wind_speed", "wind speed")
+        wd_col  = find_col_kpi(df,"wind_direction", "wind direction")
+        dni_col = find_col_kpi(df,"direct_normal_radiation", "dni")
+        ghi_col = find_col_kpi(df,"global_horizontal_radiation", "ghi")
+        pr_col = find_col_kpi(df,"liquid_precipitation_quantity", "pr")
+        
+        pairs = [
+            (("Dry Bulb Temperature",        series_or_none(df,dry_col), "°C"),
+             ("Dew Point Temperature",   series_or_none(df,dew_col), "°C")),
+            (("Wind Speed", series_or_none(df,ws_col),  "m/s"),
+             ("Wind Direction",   series_or_none(df,wd_col),  "°")),
+            (("Direct Normal Radiation", series_or_none(df,dni_col), "Wh/m²"),
+             ("Global Horizontal Rad.",  series_or_none(df,ghi_col), "Wh/m²")),
+        ]
+        
+        for (left_label, left_s, left_unit), (right_label, right_s, right_unit) in pairs:
+            row = st.columns(6)
+            emit_triplet(row, 0, left_label,  left_s,  left_unit)
+            emit_triplet(row, 3, right_label, right_s, right_unit)
 
 
-    # ===== Synced 2 cols × 6 rows figure (time-series + histograms) 
-    st.subheader("Timeseries Plot")
-    
-    st.markdown("#### Select Bin width for histograms")
-
-    # UI for per-row histogram bin widths
-    c1, c2 = st.columns(2)
-    with c1:
-        bw_dry = st.select_slider("Dry bulb bin width (°C)", options=[1.0, 2.0, 5.0], value=2.0, key="bw_dry")
-        bw_dew = st.select_slider("Dew point bin width (°C)", options=[1.0, 2.0, 5.0], value=2.0, key="bw_dew")
-        bw_rh  = st.select_slider("Humidity bin width (%)", options=[2.0, 5.0, 10.0], value=5.0, key="bw_rh")
-    with c2:
-        bw_ws  = st.select_slider("Wind speed bin width (m/s)", options=[0.1, 0.5, 1.0], value=0.5, key="bw_ws")
-        bw_ghi = st.select_slider("GHI bin width (W/m²)", options=[25, 50, 100, 200], value=100, key="bw_ghi")
-        bw_prc = st.select_slider("Precipitation bin width (mm)", options=[0.2, 0.5, 1.0, 2.0], value=1.0, key="bw_prc")
-
-    binwidths = {"dry": bw_dry, "dew": bw_dew, "rh": bw_rh, "ws": bw_ws, "ghi": bw_ghi, "prec": bw_prc}
-
-
-
+    # ===== Sync Plot (time-series + histograms)
     def _hist_bins(series, width):
         s = pd.to_numeric(series, errors="coerce").dropna()
         if s.empty: return None
@@ -169,115 +148,152 @@ with tab_single:
         hi = float(np.ceil(s.max() / width) * width)
         if hi <= lo: hi = lo + width
         return dict(start=lo, end=hi, size=width)
-
-    # Build the 2x6 layout
-    rows_def = [
-        ("dry", "Dry bulb (°C)", dry_col,  "°C"),
-        ("dew", "Dew point (°C)", dew_col,  "°C"),
-        ("rh",  "Relative humidity (%)", rh_col,   "%"),
-        ("ws",  "Wind speed (m/s)", ws_col,   "m/s"),
-        ("ghi", "Global horizontal radiation (W/m²)", ghi_col, "W/m²"),
-        ("prec","Liquid precipitation (mm)", pr_col,  "mm"),
-    ]
-
-    fig = make_subplots(
-        rows=6, cols=2,
-        shared_xaxes=True,
-        vertical_spacing=0.035,
-        column_widths=[0.68, 0.32],
-        subplot_titles=[t for _,t,_,_ in rows_def for __ in (0,1)]
-    )
-
-    for i, (key, title, colnm, unit) in enumerate(rows_def, start=1):
-        if colnm not in df.columns:
-            fig.add_trace(go.Scatter(x=[], y=[], name=title, mode="lines"), row=i, col=1)
-            fig.add_trace(go.Histogram(x=[], name=f"{title} hist"), row=i, col=2)
-            fig.add_annotation(xref=f"x{i} domain", yref=f"y{i}", x=0.02, y=0.5, showarrow=False,
-                               text=f"“{title}” not found")
-            continue
-
-        y = num(df[colnm])
-
-        fig.add_trace(
-            go.Scatter(x=df.index, y=y, mode="lines", name=title, hovertemplate="%{y:.2f} "+unit),
-            row=i, col=1
+    
+    with st.container(border=True):
+        st.subheader("Timeseries Plot")
+        
+        with st.container(border=True):
+            st.markdown("#### Select Bin width for histograms")
+            c1, c2 = st.columns(2)
+            with c1:
+                bw_dry = st.select_slider("Dry bulb bin width (°C)", options=[1.0, 2.0, 5.0], value=2.0, key="bw_dry")
+                bw_dew = st.select_slider("Dew point bin width (°C)", options=[1.0, 2.0, 5.0], value=2.0, key="bw_dew")
+                bw_rh  = st.select_slider("Humidity bin width (%)", options=[2.0, 5.0, 10.0], value=5.0, key="bw_rh")
+            with c2:
+                bw_ws  = st.select_slider("Wind speed bin width (m/s)", options=[0.1, 0.5, 1.0], value=0.5, key="bw_ws")
+                bw_ghi = st.select_slider("GHI bin width (W/m²)", options=[25, 50, 100, 200], value=100, key="bw_ghi")
+                bw_prc = st.select_slider("Precipitation bin width (mm)", options=[0.2, 0.5, 1.0, 2.0], value=1.0, key="bw_prc")
+            binwidths = {"dry": bw_dry, "dew": bw_dew, "rh": bw_rh, "ws": bw_ws, "ghi": bw_ghi, "prec": bw_prc}
+    
+        # Build the 2x6 layout
+        rows_def = [
+            ("dry", "Dry bulb (°C)", dry_col,  "°C"),
+            ("dew", "Dew point (°C)", dew_col,  "°C"),
+            ("rh",  "Relative humidity (%)", rh_col,   "%"),
+            ("ws",  "Wind speed (m/s)", ws_col,   "m/s"),
+            ("ghi", "Global horizontal radiation (W/m²)", ghi_col, "W/m²"),
+            ("prec","Liquid precipitation (mm)", pr_col,  "mm"),
+        ]
+    
+        fig = make_subplots(
+            rows=6, cols=2,
+            shared_xaxes=True,
+            vertical_spacing=0.035,
+            column_widths=[0.68, 0.32],
+            subplot_titles=[t for _,t,_,_ in rows_def for __ in (0,1)]
         )
-        fig.update_yaxes(title_text=unit, row=i, col=1)
-
-        width = binwidths[key]
-        xbins = _hist_bins(y, width)
-        fig.add_trace(
-            go.Histogram(x=y, xbins=xbins, name=f"{title} hist", marker_line_width=0.2, opacity=0.95),
-            row=i, col=2
+    
+        for i, (key, title, colnm, unit) in enumerate(rows_def, start=1):
+            if colnm not in df.columns:
+                fig.add_trace(go.Scatter(x=[], y=[], name=title, mode="lines"), row=i, col=1)
+                fig.add_trace(go.Histogram(x=[], name=f"{title} hist"), row=i, col=2)
+                fig.add_annotation(xref=f"x{i} domain", yref=f"y{i}", x=0.02, y=0.5, showarrow=False,
+                                   text=f"“{title}” not found")
+                continue
+    
+            y = num(df[colnm])
+            fig.add_trace(
+                go.Scatter(x=df.index, y=y, mode="lines", name=title, hovertemplate="%{y:.2f} "+unit),
+                row=i, col=1
+            )
+            fig.update_yaxes(title_text=unit, row=i, col=1)
+            width = binwidths[key]
+            xbins = _hist_bins(y, width)
+            fig.add_trace(
+                go.Histogram(x=y, xbins=xbins, name=f"{title} hist", marker_line_width=0.2, opacity=0.95),
+                row=i, col=2
+            )
+            fig.update_xaxes(title_text=unit, row=i, col=2)
+            fig.update_yaxes(title_text="Hours", row=i, col=2)
+    
+        fig.update_layout(
+            height=300*6,
+            hovermode="x unified",
+            showlegend=False,
+            margin=dict(t=60, r=10, l=60, b=40)
         )
-        fig.update_xaxes(title_text=unit, row=i, col=2)
-        fig.update_yaxes(title_text="Hours", row=i, col=2)
-
-    fig.update_layout(
-        height=300*6,
-        hovermode="x unified",
-        showlegend=False,
-        margin=dict(t=60, r=10, l=60, b=40)
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # ===== Diurnal & Monthly (use Dry bulb) =====
-    if dry_col:
-        st.markdown("### Diurnal temperature profile (Dry bulb)")
-        diurnal_df = diurnal_stats(df[dry_col])
-        fig = go.Figure()
-        fig.add_scatter(x=diurnal_df["hour"], y=diurnal_df["mean"], 
-                        name="Mean", mode="lines+markers")
-        fig.add_scatter(x=diurnal_df["hour"], y=diurnal_df["min"], 
-                        name="Min", mode="lines+markers")
-        fig.add_scatter(x=diurnal_df["hour"], y=diurnal_df["max"], 
-                        name="Max", mode="lines+markers")
-        fig.update_layout(
-            title="Daily temperature (DBT)",
-            xaxis_title="Hour (hr)", 
-            yaxis_title="Temperature (°C)"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    with st.container(border=True):
+        with st.container(border=True):
+            st.markdown("### Diurnal temperature profile (Dry bulb)")
+            diurnal_df = diurnal_stats(df[dry_col])
+            fig = go.Figure()
+            fig.add_scatter(x=diurnal_df["hour"], y=diurnal_df["mean"], 
+                            name="Mean", mode="lines+markers")
+            fig.add_scatter(x=diurnal_df["hour"], y=diurnal_df["min"], 
+                            name="Min", mode="lines+markers")
+            fig.add_scatter(x=diurnal_df["hour"], y=diurnal_df["max"], 
+                            name="Max", mode="lines+markers")
+            fig.update_layout(
+                title="Daily temperature (DBT)",
+                xaxis_title="Hour (hr)", 
+                yaxis_title="Temperature (°C)"
+            )
+            st.plotly_chart(fig, width="stretch")
+            
+        with st.container(border=True):
+            st.markdown("### Monthly climatology (Dry bulb)")
+            monthly = monthly_stats(df[dry_col])
+            fig = go.Figure()
+            fig.add_scatter(x=monthly["month"], y=monthly["mean"], 
+                            name="Mean", mode="lines+markers")
+            fig.add_scatter(x=monthly["month"], y=monthly["min"], 
+                            name="Min", mode="lines+markers")
+            fig.add_scatter(x=monthly["month"], y=monthly["max"], 
+                            name="Max", mode="lines+markers")
+            fig.update_layout(
+                title="Monthly temperature (DBT)",
+                xaxis_title="Month", 
+                yaxis_title="Temperature (°C)"
+            )
+            st.plotly_chart(fig, width="stretch")
+            
+        # Temperature bins heatmap (Dry bulb) with inverted greyscale (0=white, max=dark)
+        with st.container(border=True):
+            st.markdown("### Temperature bins — Hour-of-day heatmap (DBT)")
+            step = st.number_input("Bin width (°C)", value=2.0, min_value=0.5, step=0.5)
+            vals = num(df[dry_col]).dropna()
+            if not vals.empty:
+                bmin = float(np.floor(vals.min()))
+                bmax = float(np.ceil(vals.max()))
+                bins_edges = np.arange(bmin, bmax + step, step)
+                pivot = hour_of_day_heatmap(df[dry_col], bins_edges)
+                fig = go.Figure(data=go.Heatmap(
+                    z=pivot.values,
+                    x=[str(b) for b in pivot.columns],
+                    y=pivot.index,
+                    colorscale="Blues",
+                    reversescale=False  # 0 -> white, max -> dark
+                ))
+                fig.update_layout(title="Hours per bin by hour-of-day (DBT)",
+                                  xaxis_title="Temperature bin (°C)",
+                                  yaxis_title="Hour")
+                st.plotly_chart(fig, width="stretch")
     
-        st.markdown("### Monthly climatology (Dry bulb)")
-        monthly = monthly_stats(df[dry_col])
-        fig = go.Figure()
-        fig.add_scatter(x=monthly["month"], y=monthly["mean"], 
-                        name="Mean", mode="lines+markers")
-        fig.add_scatter(x=monthly["month"], y=monthly["min"], 
-                        name="Min", mode="lines+markers")
-        fig.add_scatter(x=monthly["month"], y=monthly["max"], 
-                        name="Max", mode="lines+markers")
-        fig.update_layout(
-            title="Monthly temperature (DBT)",
-            xaxis_title="Month", 
-            yaxis_title="Temperature (°C)"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    # ===== Wind rose speed-binned (kept) =====
+    with st.container(border=True):
+        st.markdown("### Wind direction — speed-binned rose")
+        n_sectors = st.slider("Wind rose sectors", min_value=6, max_value=36, value=16, step=2, key="n_sectors_single")
+        speed_max = float(num(df[ws_col]).max() or 20.0)
+        default_bins = [0,2,5,8,12, max(12, round(speed_max+1))]
+        bins_text = st.text_input("Speed bins (m/s, comma-separated)", value=",".join(map(str, default_bins)),
+                                  help="Left-closed, right-open bins like 0,2,5,8,12,20")
+        try:
+            speed_bins = [float(x.strip()) for x in bins_text.split(",") if x.strip()!=""]
+            if len(speed_bins) < 2: raise ValueError
+        except Exception:
+            speed_bins = [0,2,5,8,12,20]
+        rose_df = wind_rose_speed_binned(df, ws_col, wd_col, speed_bins, n_sectors)
+        if not rose_df.empty:
+            fig = px.bar_polar(rose_df, r="count", theta="sector", color="speed_bin",
+                               title="Wind rose (by speed bins)")
+            st.plotly_chart(fig, width="stretch")
     
-        # ===== Wind rose speed-binned (kept) =====
-        if ws_col and wd_col:
-            st.markdown("### Wind direction — speed-binned rose")
-            n_sectors = st.slider("Wind rose sectors", min_value=6, max_value=36, value=16, step=2, key="n_sectors_single")
-            speed_max = float(num(df[ws_col]).max() or 20.0)
-            default_bins = [0,2,5,8,12, max(12, round(speed_max+1))]
-            bins_text = st.text_input("Speed bins (m/s, comma-separated)", value=",".join(map(str, default_bins)),
-                                      help="Left-closed, right-open bins like 0,2,5,8,12,20")
-            try:
-                speed_bins = [float(x.strip()) for x in bins_text.split(",") if x.strip()!=""]
-                if len(speed_bins) < 2: raise ValueError
-            except Exception:
-                speed_bins = [0,2,5,8,12,20]
-            rose_df = wind_rose_speed_binned(df, ws_col, wd_col, speed_bins, n_sectors)
-            if not rose_df.empty:
-                fig = px.bar_polar(rose_df, r="count", theta="sector", color="speed_bin",
-                                   title="Wind rose (by speed bins)")
-                st.plotly_chart(fig, use_container_width=True)
-    
-        # ===== Advanced analytics =====
-        st.markdown("## Advanced analytics")
-    
+    # ===== Advanced analytics =====
+    with st.container(border=True):
+   
         # Degree-days with explanation
         st.markdown("### Degree-days (HDD/CDD)")
         st.info("**What are degree-days?**  Heating Degree-Days (HDD) and Cooling Degree-Days (CDD) "
@@ -302,10 +318,11 @@ with tab_single:
                 fig.add_bar(x=monthly_dd["month"], y=monthly_dd["HDD"], name="HDD")
                 fig.add_bar(x=monthly_dd["month"], y=monthly_dd["CDD"], name="CDD")
                 fig.update_layout(barmode="group", xaxis_title="Month", yaxis_title="°C·day")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         else:
             st.warning("Dry bulb temperature not found; cannot compute degree-days.")
     
+    with st.container(border=True):
         # Comfort models with explanations
         st.markdown("### Comfort hours")
         st.info("**Fixed band:** You specify acceptable indoor temperature limits (and optionally RH). "
@@ -334,7 +351,7 @@ with tab_single:
             comfort_m["ok"] *= 100.0
             fig = px.bar(comfort_m, x="month", y="ok", title="Monthly Comfort (%) — Fixed band")
             fig.update_layout(yaxis_title="% of hours within comfort band")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     
         else:
             c1, c2, c3 = st.columns(3)
@@ -357,7 +374,7 @@ with tab_single:
                 comfort_m["ok"] *= 100.0
                 fig = px.bar(comfort_m, x="month", y="ok", title=f"Monthly Comfort (%) — Adaptive {accept}%")
                 fig.update_layout(yaxis_title="% of hours within adaptive band")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
     
                 st.caption("Adaptive band shown against dry-bulb temperature.")
                 x = df.index; y = num(df[dry_col])
@@ -366,31 +383,9 @@ with tab_single:
                 fig.add_trace(go.Scatter(x=x, y=lo_h, name="Adaptive lower", mode="lines", fill="tonexty", line=dict(width=0.5)))
                 fig.add_trace(go.Scatter(x=x, y=y, name="Dry bulb", mode="lines"))
                 fig.update_layout(title="Dry bulb vs Adaptive Comfort Band", xaxis_title="Time", yaxis_title="°C")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             else:
                 st.warning("Dry bulb temperature not found; cannot compute adaptive comfort.")
-    
-        # Temperature bins heatmap (Dry bulb) with inverted greyscale (0=white, max=dark)
-        if dry_col:
-            st.markdown("### Temperature bins — Hour-of-day heatmap (DBT)")
-            step = st.number_input("Bin width (°C)", value=2.0, min_value=0.5, step=0.5)
-            vals = num(df[dry_col]).dropna()
-            if not vals.empty:
-                bmin = float(np.floor(vals.min()))
-                bmax = float(np.ceil(vals.max()))
-                bins_edges = np.arange(bmin, bmax + step, step)
-                pivot = hour_of_day_heatmap(df[dry_col], bins_edges)
-                fig = go.Figure(data=go.Heatmap(
-                    z=pivot.values,
-                    x=[str(b) for b in pivot.columns],
-                    y=pivot.index,
-                    colorscale="Blues",
-                    reversescale=False  # 0 -> white, max -> dark
-                ))
-                fig.update_layout(title="Hours per bin by hour-of-day (DBT)",
-                                  xaxis_title="Temperature bin (°C)",
-                                  yaxis_title="Hour")
-                st.plotly_chart(fig, use_container_width=True)
 
 # =====================================================================================
 # COMPARISON TAB (unchanged from previous adaptive version)
@@ -478,7 +473,7 @@ with tab_compare:
     kpi_df = pd.DataFrame(kpi_rows)
     st.dataframe(kpi_df.style.format({
         "Mean temp (°C)": "{:.2f}", "Min temp (°C)": "{:.2f}", "Max temp (°C)": "{:.2f}", "Avg daily GHI (kWh/m²·day)": "{:.2f}",
-    }), use_container_width=True)
+    }), width="stretch")
 
     # Temperature time series
     st.markdown("### Temperature time series")
@@ -488,7 +483,7 @@ with tab_compare:
         if sel_temp_c in dff.columns:
             fig.add_trace(go.Scatter(x=dff.index, y=num(dff[sel_temp_c]), mode="lines", name=label, line=dict(color=color_map[label])))
     fig.update_layout(xaxis_title="Time", yaxis_title="Temperature (°C)")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Temperature histogram overlay
     st.markdown("### Temperature histogram (overlay)")
@@ -499,7 +494,7 @@ with tab_compare:
         if sel_temp_c in dff.columns:
             fig.add_trace(go.Histogram(x=num(dff[sel_temp_c]).dropna(), nbinsx=bins, name=label, opacity=0.5, marker_color=color_map[label]))
     fig.update_layout(barmode="overlay", xaxis_title="Temperature (°C)", yaxis_title="Hours")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Comfort comparison
     st.markdown("### Comfort comparison")
@@ -513,7 +508,7 @@ with tab_compare:
             rows.append({"Label": label, "Comfort %": pct})
         cmp_df = pd.DataFrame(rows)
         fig = px.bar(cmp_df, x="Label", y="Comfort %", color="Label", color_discrete_map=color_map, title="Comfort hours (%) by file — Fixed band")
-        fig.update_layout(showlegend=False); st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(showlegend=False); st.plotly_chart(fig, width="stretch")
     else:
         rows = []
         for label, name, df, loc, _ in parsed:
@@ -526,7 +521,7 @@ with tab_compare:
             rows.append({"Label": label, "Comfort %": pct})
         cmp_df = pd.DataFrame(rows)
         fig = px.bar(cmp_df, x="Label", y="Comfort %", color="Label", color_discrete_map=color_map, title=f"Comfort hours (%) by file — Adaptive {accept_c}%")
-        fig.update_layout(showlegend=False); st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(showlegend=False); st.plotly_chart(fig, width="stretch")
 
     # Degree-days comparison (unchanged)
     st.markdown("### Degree-days comparison")
@@ -546,10 +541,10 @@ with tab_compare:
     c1, c2 = st.columns(2)
     with c1:
         fig = px.bar(dd_df, x="Label", y="HDD", color="Label", color_discrete_map=color_map, title="Total HDD (°C·day)")
-        fig.update_layout(showlegend=False); st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(showlegend=False); st.plotly_chart(fig, width="stretch")
     with c2:
         fig = px.bar(dd_df, x="Label", y="CDD", color="Label", color_discrete_map=color_map, title="Total CDD (°C·day)")
-        fig.update_layout(showlegend=False); st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(showlegend=False); st.plotly_chart(fig, width="stretch")
     
     st.caption("End here")
 

@@ -239,3 +239,4 @@ def series_or_none(df,col):
         return num(df[col])  # uses your existing num()
     return None
 
+
