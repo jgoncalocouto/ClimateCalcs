@@ -10,7 +10,6 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.colors import qualitative
-
 from fcns import *
 
 st.set_page_config(page_title="EnergyPlus Weather File Explorer", layout="wide")
@@ -49,26 +48,63 @@ tab_single, tab_compare = st.tabs(["📁 Deep Dive analysis", "🆚 Head to Head
 # SINGLE FILE TAB
 # =====================================================================================
 with tab_single:
-    st.subheader("Single EPW analysis")
-    selected_file = st.selectbox("Select EPW file", epw_names, index=0)
-    epw_path = DATA_DIR / selected_file
-
-    with st.spinner("Parsing EPW..."):
+    st.subheader("Deep Dive Analysis")
+    with st.expander("Selection", expanded=True):
+    
+        selected_file = st.selectbox("Select EPW file", epw_names, index=0)
+        epw_path = DATA_DIR / selected_file
+        
+        with st.spinner("Parsing EPW..."):
+            try:
+                df, location_dict, df_stats = parse_one(epw_path)
+            except Exception as e:
+                st.error(f"Failed to parse EPW: {e}"); st.stop()
+        
+        ## Time Filtering
+        min_date, max_date = df.index.min().date(), df.index.max().date()
+        date_range = st.date_input("Date range", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="single_dates")
+        if isinstance(date_range, tuple):
+            start_date, end_date = date_range
+        else:
+            start_date, end_date = min_date, date_range
+        mask = (df.index.date >= start_date) & (df.index.date <= end_date)
+        #Update dataframe to timeperiod selected
+        df = df.loc[mask]
+        df_stats=dataframe_stats(df)
+        
+        ## File & Location Details
+        # File Selection
+        st.markdown("**File Selection**")
+        st.caption(f"File: `{selected_file}`")
+        # Location details
+        st.markdown("**Location**")
+        if location_dict:
+            loc_df = pd.DataFrame(location_dict, index=[0])
+            st.dataframe(loc_df, width='stretch',hide_index=True)
+        else:
+            st.info("No location metadata available.")
+        
+    ## Download timeseries
+    st.markdown("### Download timeseries (filtered range)")
+    with st.expander("📥 Download data", expanded=False):
+        st.download_button("Download filtered timeseries (CSV)",
+                           df.to_csv().encode("utf-8"),
+                           file_name=f"{Path(selected_file).stem}_timeseries.csv",
+                           mime="text/csv")
         try:
-            df, location_dict, df_stats = parse_one(epw_path)
-        except Exception as e:
-            st.error(f"Failed to parse EPW: {e}"); st.stop()
-
-    # Controls
-    min_date, max_date = df.index.min().date(), df.index.max().date()
-    date_range = st.date_input("Date range", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="single_dates")
-    if isinstance(date_range, tuple):
-        start_date, end_date = date_range
-    else:
-        start_date, end_date = min_date, date_range
-    mask = (df.index.date >= start_date) & (df.index.date <= end_date)
-    df = df.loc[mask]
-
+            import io
+            buf = io.BytesIO(); df.to_parquet(buf, index=True)
+            st.download_button("Download filtered timeseries (Parquet)",
+                               data=buf.getvalue(),
+                               file_name=f"{Path(selected_file).stem}_timeseries.parquet",
+                               mime="application/octet-stream")
+        except Exception:
+            st.caption("Parquet export unavailable (install pyarrow if needed).")
+    
+    
+    ## KPIs for Dry & Wet bulb
+    st.markdown("### Key statistics (filtered range)")
+    
     available_cols = list(df.columns)
     dry_col = "dry_bulb_temperature" if "dry_bulb_temperature" in available_cols else None
     dew_col = "dew_point_temperature" if "dew_point_temperature" in available_cols else None
@@ -76,20 +112,9 @@ with tab_single:
     ghi_col = next((c for c in available_cols if "global_horizontal_radiation" in c), None)
     ws_col  = next((c for c in available_cols if "wind_speed" in c), None)
     wd_col  = next((c for c in available_cols if "wind_direction" in c), None)
-
-    # Header
-    colA, colB = st.columns([2, 1])
-    with colA: st.caption(f"File: `{selected_file}`")
-    with colB:
-        st.markdown("**Location**")
-        if location_dict:
-            loc_df = pd.DataFrame(location_dict, index=[0])
-            st.dataframe(loc_df, width='content')
-        else:
-            st.info("No location metadata available.")
-
-    # KPIs for Dry & Wet bulb
-    st.markdown("### Key statistics (filtered range)")
+    In_col  = next((c for c in available_cols if "direct_normal_radiation" in c), None)
+    Ig_col  = next((c for c in available_cols if "global_horizontal_radiation" in c), None)
+       
     kpi_cols = st.columns(6)
     if dry_col:
         v = num(df[dry_col])
@@ -110,27 +135,48 @@ with tab_single:
         with kpi_cols[3]: st.metric("DewPoint Mean", "—")
         with kpi_cols[4]: st.metric("DewPoint Min", "—")
         with kpi_cols[5]: st.metric("DewPoint Max", "—")
+        
+    kpi_cols = st.columns(6)
+    if ws_col:
+        v = num(df[ws_col])
+        with kpi_cols[0]: st.metric("Wind Speed Mean", fmt(v.mean(), " m/s"))
+        with kpi_cols[1]: st.metric("Wind Speed Min", fmt(v.min(), " m/s"))
+        with kpi_cols[2]: st.metric("Wind Speed Max", fmt(v.max(), " m/s"))
+    else:
+        with kpi_cols[0]: st.metric("Wind Speed Mean", "—")
+        with kpi_cols[1]: st.metric("Wind Speed Min", "—")
+        with kpi_cols[2]: st.metric("Wind Speed Max", "—")
 
-    # GHI KPI (separate row)
-    if ghi_col:
-        ghi_daily = compute_daily_ghi(df, ghi_col)
-        st.metric("Avg daily GHI", fmt(ghi_daily["kWh/m²·day"].mean(), " kWh/m²·day"))
+    if wd_col and wd_col in df.columns:
+        w = num(df[wd_col])
+        with kpi_cols[3]: st.metric("Wind Direction Mean", fmt(w.mean(), " °"))
+        with kpi_cols[4]: st.metric("Wind Direction Min", fmt(w.min(), " °"))
+        with kpi_cols[5]: st.metric("Wind Direction Max", fmt(w.max(), " °"))
+    else:
+        with kpi_cols[3]: st.metric("Wind Direction Mean", "—")
+        with kpi_cols[4]: st.metric("Wind Direction Min", "—")
+        with kpi_cols[5]: st.metric("Wind Direction Max", "—")
+        
+    kpi_cols = st.columns(6)
+    if In_col:
+        v = num(df[In_col])
+        with kpi_cols[0]: st.metric("Direct Normal Radiation Mean", fmt(v.mean(), " Wh/m^2"))
+        with kpi_cols[1]: st.metric("Direct Normal Radiation Min", fmt(v.min(), " Wh/m^2"))
+        with kpi_cols[2]: st.metric("Direct Normal Radiation Max", fmt(v.max(), " Wh/m^2"))
+    else:
+        with kpi_cols[0]: st.metric("Direct Normal Radiation Mean", "—")
+        with kpi_cols[1]: st.metric("Direct Normal Radiation Min", "—")
+        with kpi_cols[2]: st.metric("Direct Normal Radiation Max", "—")
 
-    # Downloads
-    with st.expander("📥 Download data", expanded=False):
-        st.download_button("Download filtered timeseries (CSV)",
-                           df.to_csv().encode("utf-8"),
-                           file_name=f"{Path(selected_file).stem}_timeseries.csv",
-                           mime="text/csv")
-        try:
-            import io
-            buf = io.BytesIO(); df.to_parquet(buf, index=True)
-            st.download_button("Download filtered timeseries (Parquet)",
-                               data=buf.getvalue(),
-                               file_name=f"{Path(selected_file).stem}_timeseries.parquet",
-                               mime="application/octet-stream")
-        except Exception:
-            st.caption("Parquet export unavailable (install pyarrow if needed).")
+    if Ig_col and Ig_col in df.columns:
+        w = num(df[Ig_col])
+        with kpi_cols[3]: st.metric("Global Horizontal Radiation Mean", fmt(w.mean(), " Wh/m^2"))
+        with kpi_cols[4]: st.metric("Global Horizontal Radiation Min", fmt(w.min(), " Wh/m^2"))
+        with kpi_cols[5]: st.metric("Global Horizontal Radiation Max", fmt(w.max(), " Wh/m^2"))
+    else:
+        with kpi_cols[3]: st.metric("Global Horizontal Radiation Mean", "—")
+        with kpi_cols[4]: st.metric("Global Horizontal Radiation Min", "—")
+        with kpi_cols[5]: st.metric("Global Horizontal Radiation Max", "—")
 
 
     # ===== Synced 2 cols × 6 rows figure (time-series + histograms) =====
