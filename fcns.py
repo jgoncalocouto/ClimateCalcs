@@ -220,3 +220,22 @@ def dataframe_stats(df):
             "max": float(s.max()) if s.count() else None,
         }
         return df_stats
+    
+def find_col_kpi(df, *needles):
+    """Return the first df column that contains any of the given substrings (case-insensitive)."""
+    available_cols = list(df.columns)
+    low = [c.lower() for c in available_cols]
+
+    for needle in needles:
+        needle = needle.lower()
+        for i, c in enumerate(low):
+            if needle in c:
+                return available_cols[i]  # return the original column name
+    return None  # nothing found
+
+def series_or_none(df,col):
+    """Return numeric series for a column if present, else None."""
+    if col and col in df.columns:
+        return num(df[col])  # uses your existing num()
+    return None
+

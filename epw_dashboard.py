@@ -30,7 +30,16 @@ def compute_daily_ghi(df, ghi_col):
     ghi = num(df[ghi_col]).fillna(0.0)
     return (ghi.resample("D").sum() / 1000.0).rename("kWh/m²·day").to_frame()
 
-
+def emit_triplet(cols, start_idx, label, s, unit):
+    """Write Mean/Min/Max metrics for series s into 3 adjacent columns."""
+    if s is not None:
+        with cols[start_idx + 0]: st.metric(f"{label} Mean", fmt(s.mean(), f" {unit}"))
+        with cols[start_idx + 1]: st.metric(f"{label} Min",  fmt(s.min(),  f" {unit}"))
+        with cols[start_idx + 2]: st.metric(f"{label} Max",  fmt(s.max(),  f" {unit}"))
+    else:
+        with cols[start_idx + 0]: st.metric(f"{label} Mean", "—")
+        with cols[start_idx + 1]: st.metric(f"{label} Min",  "—")
+        with cols[start_idx + 2]: st.metric(f"{label} Max",  "—")
 
 
 
@@ -103,80 +112,33 @@ with tab_single:
     
     
     ## KPIs for Dry & Wet bulb
-    st.markdown("### Key statistics (filtered range)")
+    st.markdown("### Summary Statistics")
     
     available_cols = list(df.columns)
-    dry_col = "dry_bulb_temperature" if "dry_bulb_temperature" in available_cols else None
-    dew_col = "dew_point_temperature" if "dew_point_temperature" in available_cols else None
-    rh_col = next((c for c in available_cols if "relative_humidity" in c), None)
-    ghi_col = next((c for c in available_cols if "global_horizontal_radiation" in c), None)
-    ws_col  = next((c for c in available_cols if "wind_speed" in c), None)
-    wd_col  = next((c for c in available_cols if "wind_direction" in c), None)
-    In_col  = next((c for c in available_cols if "direct_normal_radiation" in c), None)
-    Ig_col  = next((c for c in available_cols if "global_horizontal_radiation" in c), None)
-       
-    kpi_cols = st.columns(6)
-    if dry_col:
-        v = num(df[dry_col])
-        with kpi_cols[0]: st.metric("DBT Mean", fmt(v.mean(), " °C"))
-        with kpi_cols[1]: st.metric("DBT Min", fmt(v.min(), " °C"))
-        with kpi_cols[2]: st.metric("DBT Max", fmt(v.max(), " °C"))
-    else:
-        with kpi_cols[0]: st.metric("DBT Mean", "—")
-        with kpi_cols[1]: st.metric("DBT Min", "—")
-        with kpi_cols[2]: st.metric("DBT Max", "—")
-
-    if dew_col and dew_col in df.columns:
-        w = num(df[dew_col])
-        with kpi_cols[3]: st.metric("DewPoint Mean", fmt(w.mean(), " °C"))
-        with kpi_cols[4]: st.metric("DewPoint Min", fmt(w.min(), " °C"))
-        with kpi_cols[5]: st.metric("DewPoint Max", fmt(w.max(), " °C"))
-    else:
-        with kpi_cols[3]: st.metric("DewPoint Mean", "—")
-        with kpi_cols[4]: st.metric("DewPoint Min", "—")
-        with kpi_cols[5]: st.metric("DewPoint Max", "—")
-        
-    kpi_cols = st.columns(6)
-    if ws_col:
-        v = num(df[ws_col])
-        with kpi_cols[0]: st.metric("Wind Speed Mean", fmt(v.mean(), " m/s"))
-        with kpi_cols[1]: st.metric("Wind Speed Min", fmt(v.min(), " m/s"))
-        with kpi_cols[2]: st.metric("Wind Speed Max", fmt(v.max(), " m/s"))
-    else:
-        with kpi_cols[0]: st.metric("Wind Speed Mean", "—")
-        with kpi_cols[1]: st.metric("Wind Speed Min", "—")
-        with kpi_cols[2]: st.metric("Wind Speed Max", "—")
-
-    if wd_col and wd_col in df.columns:
-        w = num(df[wd_col])
-        with kpi_cols[3]: st.metric("Wind Direction Mean", fmt(w.mean(), " °"))
-        with kpi_cols[4]: st.metric("Wind Direction Min", fmt(w.min(), " °"))
-        with kpi_cols[5]: st.metric("Wind Direction Max", fmt(w.max(), " °"))
-    else:
-        with kpi_cols[3]: st.metric("Wind Direction Mean", "—")
-        with kpi_cols[4]: st.metric("Wind Direction Min", "—")
-        with kpi_cols[5]: st.metric("Wind Direction Max", "—")
-        
-    kpi_cols = st.columns(6)
-    if In_col:
-        v = num(df[In_col])
-        with kpi_cols[0]: st.metric("Direct Normal Radiation Mean", fmt(v.mean(), " Wh/m^2"))
-        with kpi_cols[1]: st.metric("Direct Normal Radiation Min", fmt(v.min(), " Wh/m^2"))
-        with kpi_cols[2]: st.metric("Direct Normal Radiation Max", fmt(v.max(), " Wh/m^2"))
-    else:
-        with kpi_cols[0]: st.metric("Direct Normal Radiation Mean", "—")
-        with kpi_cols[1]: st.metric("Direct Normal Radiation Min", "—")
-        with kpi_cols[2]: st.metric("Direct Normal Radiation Max", "—")
-
-    if Ig_col and Ig_col in df.columns:
-        w = num(df[Ig_col])
-        with kpi_cols[3]: st.metric("Global Horizontal Radiation Mean", fmt(w.mean(), " Wh/m^2"))
-        with kpi_cols[4]: st.metric("Global Horizontal Radiation Min", fmt(w.min(), " Wh/m^2"))
-        with kpi_cols[5]: st.metric("Global Horizontal Radiation Max", fmt(w.max(), " Wh/m^2"))
-    else:
-        with kpi_cols[3]: st.metric("Global Horizontal Radiation Mean", "—")
-        with kpi_cols[4]: st.metric("Global Horizontal Radiation Min", "—")
-        with kpi_cols[5]: st.metric("Global Horizontal Radiation Max", "—")
+    
+    dry_col = find_col_kpi(df,"dry_bulb_temperature", "dry bulb")
+    dew_col = find_col_kpi(df,"dew_point_temperature", "dew point")
+    rh_col  = find_col_kpi(df,"relative_humidity","rh")
+    ws_col  = find_col_kpi(df,"wind_speed", "wind speed")
+    wd_col  = find_col_kpi(df,"wind_direction", "wind direction")
+    dni_col = find_col_kpi(df,"direct_normal_radiation", "dni")
+    ghi_col = find_col_kpi(df,"global_horizontal_radiation", "ghi")
+    
+        # --- Build the grid as pairs (left metric, right metric) -> each row has 6 KPI slots ---
+    pairs = [
+        (("Dry Bulb Temperature",        series_or_none(df,dry_col), "°C"),
+         ("Dew Point Temperature",   series_or_none(df,dew_col), "°C")),
+        (("Wind Speed", series_or_none(df,ws_col),  "m/s"),
+         ("Wind Direction",   series_or_none(df,wd_col),  "°")),
+        (("Direct Normal Radiation", series_or_none(df,dni_col), "Wh/m²"),
+         ("Global Horizontal Rad.",  series_or_none(df,ghi_col), "Wh/m²")),
+    ]
+    
+    
+    for (left_label, left_s, left_unit), (right_label, right_s, right_unit) in pairs:
+        row = st.columns(6)
+        emit_triplet(row, 0, left_label,  left_s,  left_unit)
+        emit_triplet(row, 3, right_label, right_s, right_unit)
 
 
     # ===== Synced 2 cols × 6 rows figure (time-series + histograms) =====
