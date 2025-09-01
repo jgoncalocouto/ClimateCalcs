@@ -85,18 +85,7 @@ def parse_with_ladybug(epw_path: str):
             pass
         
     # Simple stats
-    df_stats = {}
-    for col in df.columns:
-        s = pd.to_numeric(df[col], errors="coerce")
-        df_stats[col] = {
-            "count": int(s.count()),
-            "mean": float(s.mean()) if s.count() else None,
-            "std": float(s.std()) if s.count() else None,
-            "min": float(s.min()) if s.count() else None,
-            "p50": float(s.quantile(0.5)) if s.count() else None,
-            "max": float(s.max()) if s.count() else None,
-        }
-        
+    df_stats = dataframe_stats(df)
     return df,location_dict,df_stats
 
 
@@ -216,3 +205,18 @@ def adaptive_mask_hourly(temp_series, daily_band_df):
     lo_hourly = pd.Series(lo_map.reindex(days).values, index=hourly.index)
     hi_hourly = pd.Series(hi_map.reindex(days).values, index=hourly.index)
     return (hourly >= lo_hourly) & (hourly <= hi_hourly), lo_hourly, hi_hourly
+
+def dataframe_stats(df):
+    # Simple stats
+    df_stats = {}
+    for col in df.columns:
+        s = pd.to_numeric(df[col], errors="coerce")
+        df_stats[col] = {
+            "count": int(s.count()),
+            "mean": float(s.mean()) if s.count() else None,
+            "std": float(s.std()) if s.count() else None,
+            "min": float(s.min()) if s.count() else None,
+            "p50": float(s.quantile(0.5)) if s.count() else None,
+            "max": float(s.max()) if s.count() else None,
+        }
+        return df_stats
