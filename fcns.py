@@ -239,4 +239,43 @@ def series_or_none(df,col):
         return num(df[col])  # uses your existing num()
     return None
 
+def histogram_dataframe(series: pd.Series, width: float, unit: str = "") -> pd.DataFrame:
+    """
+    Build a DataFrame of histogram bins for a given series and bin width.
+    Matches the binning logic used in Plotly.
+    
+    Parameters
+    ----------
+    series : pd.Series
+        Input data (numeric).
+    width : float
+        Bin width.
+    unit : str
+        Optional unit label for the variable.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: [bin_start, bin_end, count, unit]
+    """
+    s = pd.to_numeric(series, errors="coerce").dropna()
+    if s.empty:
+        return pd.DataFrame(columns=["bin_start", "bin_end", "count", "unit"])
+
+    lo = np.floor(s.min() / width) * width
+    hi = np.ceil(s.max() / width) * width
+    bins = np.arange(lo, hi + width, width)
+
+    cats = pd.cut(s, bins=bins, right=False, include_lowest=True)
+    counts = cats.value_counts().sort_index()
+
+    df_out = pd.DataFrame({
+        "bin_start": [interval.left for interval in counts.index],
+        "bin_end":   [interval.right for interval in counts.index],
+        "count":     counts.values,
+    })
+    if unit:
+        df_out["unit"] = unit
+    return df_out
+
 

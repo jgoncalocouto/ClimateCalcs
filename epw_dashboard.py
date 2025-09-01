@@ -152,19 +152,6 @@ with tab_single:
     with st.container(border=True):
         st.subheader("Timeseries Plot")
         
-        with st.container(border=True):
-            st.markdown("#### Select Bin width for histograms")
-            c1, c2 = st.columns(2)
-            with c1:
-                bw_dry = st.select_slider("Dry bulb bin width (°C)", options=[1.0, 2.0, 5.0], value=2.0, key="bw_dry")
-                bw_dew = st.select_slider("Dew point bin width (°C)", options=[1.0, 2.0, 5.0], value=2.0, key="bw_dew")
-                bw_rh  = st.select_slider("Humidity bin width (%)", options=[2.0, 5.0, 10.0], value=5.0, key="bw_rh")
-            with c2:
-                bw_ws  = st.select_slider("Wind speed bin width (m/s)", options=[0.1, 0.5, 1.0], value=0.5, key="bw_ws")
-                bw_ghi = st.select_slider("GHI bin width (W/m²)", options=[25, 50, 100, 200], value=100, key="bw_ghi")
-                bw_prc = st.select_slider("Precipitation bin width (mm)", options=[0.2, 0.5, 1.0, 2.0], value=1.0, key="bw_prc")
-            binwidths = {"dry": bw_dry, "dew": bw_dew, "rh": bw_rh, "ws": bw_ws, "ghi": bw_ghi, "prec": bw_prc}
-    
         # Build the 2x6 layout
         rows_def = [
             ("dry", "Dry bulb (°C)", dry_col,  "°C"),
@@ -174,7 +161,32 @@ with tab_single:
             ("ghi", "Global horizontal radiation (W/m²)", ghi_col, "W/m²"),
             ("prec","Liquid precipitation (mm)", pr_col,  "mm"),
         ]
-    
+        
+        with st.expander("Select Bin width for histograms",expanded=True):
+            st.markdown("#### Select Bin width for histograms")
+            bw_dry = st.select_slider("Dry bulb bin width (°C)", options=[1.0, 2.0, 5.0], value=2.0, key="bw_dry")
+            bw_dew = st.select_slider("Dew point bin width (°C)", options=[1.0, 2.0, 5.0], value=2.0, key="bw_dew")
+            bw_rh  = st.select_slider("Humidity bin width (%)", options=[2.0, 5.0, 10.0], value=5.0, key="bw_rh")
+            bw_ws  = st.select_slider("Wind speed bin width (m/s)", options=[0.1, 0.5, 1.0], value=0.5, key="bw_ws")
+            bw_ghi = st.select_slider("GHI bin width (W/m²)", options=[25, 50, 100, 200], value=100, key="bw_ghi")
+            bw_prc = st.select_slider("Precipitation bin width (mm)", options=[0.2, 0.5, 1.0, 2.0], value=1.0, key="bw_prc")
+            binwidths = {"dry": bw_dry, "dew": bw_dew, "rh": bw_rh, "ws": bw_ws, "ghi": bw_ghi, "prec": bw_prc}
+            
+        with st.expander("⬇️ Download histograms",expanded=False):
+            df_hists=[]
+            for i, (key, title, colnm, unit) in enumerate(rows_def, start=1):
+                y = num(df[colnm])
+                width = binwidths[key]
+                xbins = _hist_bins(y, width)
+                df_hist = histogram_dataframe(y, width, unit)
+                df_hist["Variable"]=title
+                df_hists.append(df_hist)
+                
+                st.download_button(title,
+                                   df_hist.to_csv().encode("utf-8"),
+                                   file_name=f"{Path(selected_file).stem}_{key}_hist.csv",
+                                   mime="text/csv")
+
         fig = make_subplots(
             rows=6, cols=2,
             shared_xaxes=True,
@@ -182,7 +194,9 @@ with tab_single:
             column_widths=[0.68, 0.32],
             subplot_titles=[t for _,t,_,_ in rows_def for __ in (0,1)]
         )
-    
+        
+        ys=[]
+        widths=[]
         for i, (key, title, colnm, unit) in enumerate(rows_def, start=1):
             if colnm not in df.columns:
                 fig.add_trace(go.Scatter(x=[], y=[], name=title, mode="lines"), row=i, col=1)
@@ -205,7 +219,8 @@ with tab_single:
             )
             fig.update_xaxes(title_text=unit, row=i, col=2)
             fig.update_yaxes(title_text="Hours", row=i, col=2)
-    
+            
+        
         fig.update_layout(
             height=300*6,
             hovermode="x unified",
@@ -216,42 +231,9 @@ with tab_single:
 
     # ===== Diurnal & Monthly (use Dry bulb) =====
     with st.container(border=True):
-        with st.container(border=True):
-            st.markdown("### Diurnal temperature profile (Dry bulb)")
-            diurnal_df = diurnal_stats(df[dry_col])
-            fig = go.Figure()
-            fig.add_scatter(x=diurnal_df["hour"], y=diurnal_df["mean"], 
-                            name="Mean", mode="lines+markers")
-            fig.add_scatter(x=diurnal_df["hour"], y=diurnal_df["min"], 
-                            name="Min", mode="lines+markers")
-            fig.add_scatter(x=diurnal_df["hour"], y=diurnal_df["max"], 
-                            name="Max", mode="lines+markers")
-            fig.update_layout(
-                title="Daily temperature (DBT)",
-                xaxis_title="Hour (hr)", 
-                yaxis_title="Temperature (°C)"
-            )
-            st.plotly_chart(fig, width="stretch")
-            
-        with st.container(border=True):
-            st.markdown("### Monthly climatology (Dry bulb)")
-            monthly = monthly_stats(df[dry_col])
-            fig = go.Figure()
-            fig.add_scatter(x=monthly["month"], y=monthly["mean"], 
-                            name="Mean", mode="lines+markers")
-            fig.add_scatter(x=monthly["month"], y=monthly["min"], 
-                            name="Min", mode="lines+markers")
-            fig.add_scatter(x=monthly["month"], y=monthly["max"], 
-                            name="Max", mode="lines+markers")
-            fig.update_layout(
-                title="Monthly temperature (DBT)",
-                xaxis_title="Month", 
-                yaxis_title="Temperature (°C)"
-            )
-            st.plotly_chart(fig, width="stretch")
-            
         # Temperature bins heatmap (Dry bulb) with inverted greyscale (0=white, max=dark)
         with st.container(border=True):
+            st.markdown("## Temperature Deep-Dives")
             st.markdown("### Temperature bins — Hour-of-day heatmap (DBT)")
             step = st.number_input("Bin width (°C)", value=2.0, min_value=0.5, step=0.5)
             vals = num(df[dry_col]).dropna()
@@ -271,6 +253,58 @@ with tab_single:
                                   xaxis_title="Temperature bin (°C)",
                                   yaxis_title="Hour")
                 st.plotly_chart(fig, width="stretch")
+                st.download_button("⬇️ 2-D Histogram Download",
+                                   pivot.to_csv().encode("utf-8"),
+                                   file_name=f"{Path(selected_file).stem}_DBT_2Dhist.csv",
+                                   mime="text/csv")
+
+        with st.container(border=True):
+            
+            # Compute stats
+            diurnal_dry = diurnal_stats(df[dry_col])
+            diurnal_dew = diurnal_stats(df[dew_col])
+            # Create 1 row × 2 columns layout with shared x-axis
+            fig = make_subplots(rows=1, cols=2, shared_xaxes=True,subplot_titles=("Dry bulb temperature", "Dew point temperature"))
+            # --- Dry bulb traces (left) ---
+            fig.add_trace(go.Scatter(x=diurnal_dry["hour"], y=diurnal_dry["mean"], name="Mean (Dry)", mode="lines+markers"),row=1, col=1)
+            fig.add_trace(go.Scatter(x=diurnal_dry["hour"], y=diurnal_dry["min"], name="Min (Dry)", mode="lines+markers"),row=1, col=1)
+            fig.add_trace(go.Scatter(x=diurnal_dry["hour"], y=diurnal_dry["max"], name="Max (Dry)", mode="lines+markers"),row=1, col=1)
+            # --- Dew point traces (right) ---
+            fig.add_trace(go.Scatter(x=diurnal_dew["hour"], y=diurnal_dew["mean"], name="Mean (Dew)", mode="lines+markers"),row=1, col=2)
+            fig.add_trace(go.Scatter(x=diurnal_dew["hour"], y=diurnal_dew["min"], name="Min (Dew)", mode="lines+markers"),row=1, col=2)
+            fig.add_trace(go.Scatter(x=diurnal_dew["hour"], y=diurnal_dew["max"], name="Max (Dew)", mode="lines+markers"),row=1, col=2)
+            # Layout adjustments
+            fig.update_xaxes(title_text="Hour", row=1, col=1)
+            fig.update_xaxes(title_text="Hour", row=1, col=2)
+            fig.update_yaxes(title_text="Temperature (°C)", row=1, col=1)
+            fig.update_yaxes(title_text="Temperature (°C)", row=1, col=2)
+            fig.update_layout(height=400,width=1000,hovermode="x unified",title="Diurnal profiles (Dry bulb vs Dew point)")
+            st.plotly_chart(fig, width="stretch")
+            
+        with st.container(border=True):
+            
+            # Compute stats
+            monthly_dry = monthly_stats(df[dry_col])
+            monthly_dew = monthly_stats(df[dew_col])
+            # Create 1 row × 2 columns layout with shared x-axis
+            fig = make_subplots(rows=1, cols=2, shared_xaxes=True,subplot_titles=("Dry bulb temperature", "Dew point temperature"))
+            # --- Dry bulb traces (left) ---
+            fig.add_trace(go.Scatter(x=monthly_dry["month"], y=monthly_dry["mean"], name="Mean (Dry)", mode="lines+markers"),row=1, col=1)
+            fig.add_trace(go.Scatter(x=monthly_dry["month"], y=monthly_dry["min"], name="Min (Dry)", mode="lines+markers"),row=1, col=1)
+            fig.add_trace(go.Scatter(x=monthly_dry["month"], y=monthly_dry["max"], name="Max (Dry)", mode="lines+markers"),row=1, col=1)
+            # --- Dew point traces (right) ---
+            fig.add_trace(go.Scatter(x=monthly_dew["month"], y=monthly_dew["mean"], name="Mean (Dew)", mode="lines+markers"),row=1, col=2)
+            fig.add_trace(go.Scatter(x=monthly_dew["month"], y=monthly_dew["min"], name="Min (Dew)", mode="lines+markers"),row=1, col=2)
+            fig.add_trace(go.Scatter(x=monthly_dew["month"], y=monthly_dew["max"], name="Max (Dew)", mode="lines+markers"),row=1, col=2)
+            # Layout adjustments
+            fig.update_xaxes(title_text="Month", row=1, col=1)
+            fig.update_xaxes(title_text="Month", row=1, col=2)
+            fig.update_yaxes(title_text="Temperature (°C)", row=1, col=1)
+            fig.update_yaxes(title_text="Temperature (°C)", row=1, col=2)
+            fig.update_layout(height=400,width=1000,hovermode="x unified",title="Monthly values (Dry bulb vs Dew point)")
+            st.plotly_chart(fig, width="stretch")
+            
+
     
     # ===== Wind rose speed-binned (kept) =====
     with st.container(border=True):
@@ -285,11 +319,17 @@ with tab_single:
             if len(speed_bins) < 2: raise ValueError
         except Exception:
             speed_bins = [0,2,5,8,12,20]
-        rose_df = wind_rose_speed_binned(df, ws_col, wd_col, speed_bins, n_sectors)
+        
+        try:
+            rose_df = wind_rose_speed_binned(df, ws_col, wd_col, speed_bins, n_sectors)
+        except Exception:
+            rose_df=pd.DataFrame()
         if not rose_df.empty:
             fig = px.bar_polar(rose_df, r="count", theta="sector", color="speed_bin",
                                title="Wind rose (by speed bins)")
             st.plotly_chart(fig, width="stretch")
+        else:
+            st.text("Data not available to compute wind rose.")
     
     # ===== Advanced analytics =====
     with st.container(border=True):
@@ -319,6 +359,10 @@ with tab_single:
                 fig.add_bar(x=monthly_dd["month"], y=monthly_dd["CDD"], name="CDD")
                 fig.update_layout(barmode="group", xaxis_title="Month", yaxis_title="°C·day")
                 st.plotly_chart(fig, width="stretch")
+                st.download_button("⬇️ Download Data",
+                                   monthly_dd.to_csv().encode("utf-8"),
+                                   file_name=f"{Path(selected_file).stem}_HDDCDD_monthly.csv",
+                                   mime="text/csv")
         else:
             st.warning("Dry bulb temperature not found; cannot compute degree-days.")
     
@@ -352,6 +396,12 @@ with tab_single:
             fig = px.bar(comfort_m, x="month", y="ok", title="Monthly Comfort (%) — Fixed band")
             fig.update_layout(yaxis_title="% of hours within comfort band")
             st.plotly_chart(fig, width="stretch")
+            comfort_m["HDD_base"]=tmin
+            comfort_m["CDD_base"]=tmax
+            st.download_button("⬇️ Download Data",
+                               comfort_m.to_csv().encode("utf-8"),
+                               file_name=f"{Path(selected_file).stem}_comfort_monthly.csv",
+                               mime="text/csv")
     
         else:
             c1, c2, c3 = st.columns(3)
@@ -375,6 +425,14 @@ with tab_single:
                 fig = px.bar(comfort_m, x="month", y="ok", title=f"Monthly Comfort (%) — Adaptive {accept}%")
                 fig.update_layout(yaxis_title="% of hours within adaptive band")
                 st.plotly_chart(fig, width="stretch")
+                
+                comfort_m["Acceptability"]=accept
+                comfort_m["RuningMean"]=alpha
+                comfort_m["TemperatureColumn"]=outdoor_col
+                st.download_button("⬇️ Download Data",
+                                   comfort_m.to_csv().encode("utf-8"),
+                                   file_name=f"{Path(selected_file).stem}_comfort_monthly.csv",
+                                   mime="text/csv")
     
                 st.caption("Adaptive band shown against dry-bulb temperature.")
                 x = df.index; y = num(df[dry_col])
@@ -384,6 +442,7 @@ with tab_single:
                 fig.add_trace(go.Scatter(x=x, y=y, name="Dry bulb", mode="lines"))
                 fig.update_layout(title="Dry bulb vs Adaptive Comfort Band", xaxis_title="Time", yaxis_title="°C")
                 st.plotly_chart(fig, width="stretch")
+
             else:
                 st.warning("Dry bulb temperature not found; cannot compute adaptive comfort.")
 
