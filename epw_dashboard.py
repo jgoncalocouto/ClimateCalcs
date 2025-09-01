@@ -9,8 +9,8 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.colors import qualitative
 from fcns import *
+from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="EnergyPlus Weather File Explorer", layout="wide")
 DATA_DIR = Path("data")
@@ -50,6 +50,7 @@ epw_names = [p.name for p in epw_paths]
 
 st.title("🌤️ EnergyPLus File Explorer")
 st.caption("Analyzes EPW files existent in a local database.")
+st.subheader("Select analysis type")
 
 tab_single, tab_compare = st.tabs(["📁 Deep Dive analysis", "🆚 Head to Head comparisson"])
 
@@ -57,7 +58,7 @@ tab_single, tab_compare = st.tabs(["📁 Deep Dive analysis", "🆚 Head to Head
 # SINGLE FILE TAB
 # =====================================================================================
 with tab_single:
-    st.subheader("Deep Dive Analysis")
+    
     with st.expander("Selection", expanded=True):
     
         selected_file = st.selectbox("Select EPW file", epw_names, index=0)
@@ -94,16 +95,15 @@ with tab_single:
             st.info("No location metadata available.")
         
     ## Download timeseries
-    st.markdown("### Download timeseries (filtered range)")
-    with st.expander("📥 Download data", expanded=False):
-        st.download_button("Download filtered timeseries (CSV)",
+    with st.expander("📥 Download filtered data", expanded=False):
+        st.download_button("CSV",
                            df.to_csv().encode("utf-8"),
                            file_name=f"{Path(selected_file).stem}_timeseries.csv",
                            mime="text/csv")
         try:
             import io
             buf = io.BytesIO(); df.to_parquet(buf, index=True)
-            st.download_button("Download filtered timeseries (Parquet)",
+            st.download_button("Parquet",
                                data=buf.getvalue(),
                                file_name=f"{Path(selected_file).stem}_timeseries.parquet",
                                mime="application/octet-stream")
@@ -123,6 +123,7 @@ with tab_single:
     wd_col  = find_col_kpi(df,"wind_direction", "wind direction")
     dni_col = find_col_kpi(df,"direct_normal_radiation", "dni")
     ghi_col = find_col_kpi(df,"global_horizontal_radiation", "ghi")
+    pr_col = find_col_kpi(df,"liquid_precipitation_quantity", "pr")
     
         # --- Build the grid as pairs (left metric, right metric) -> each row has 6 KPI slots ---
     pairs = [
@@ -141,23 +142,10 @@ with tab_single:
         emit_triplet(row, 3, right_label, right_s, right_unit)
 
 
-    # ===== Synced 2 cols × 6 rows figure (time-series + histograms) =====
-    # Robust column detection for required signals
-    def find_col(df, *needles):
-        cols = list(df.columns)
-        low = [c.lower() for c in cols]
-        for i, c in enumerate(low):
-            if all(n in c for n in needles):
-                return cols[i]
-        return None
-
-    # Prefer already detected columns; fall back to fuzzy finder
-    dry_c  = dry_col or find_col(df, "dry", "bulb") or find_col(df, "dbt") or "dry_bulb_temperature"
-    dew_c  = dew_col or find_col(df, "dew", "point") or "dew_point_temperature"
-    rh_c   = rh_col  or find_col(df, "relative", "humidity") or "relative_humidity"
-    ws_c   = ws_col  or find_col(df, "wind", "speed") or "wind_speed"
-    ghi_c  = ghi_col or find_col(df, "global", "horizontal", "radiation") or find_col(df, "ghi") or "global_horizontal_radiation"
-    pr_c   = find_col(df, "liquid", "precipitation") or find_col(df, "precipitation") or "liquid_precipitation_quantity"
+    # ===== Synced 2 cols × 6 rows figure (time-series + histograms) 
+    st.subheader("Timeseries Plot")
+    
+    st.markdown("#### Select Bin width for histograms")
 
     # UI for per-row histogram bin widths
     c1, c2 = st.columns(2)
@@ -172,10 +160,7 @@ with tab_single:
 
     binwidths = {"dry": bw_dry, "dew": bw_dew, "rh": bw_rh, "ws": bw_ws, "ghi": bw_ghi, "prec": bw_prc}
 
-    from plotly.subplots import make_subplots
-    import plotly.graph_objects as go
-    import numpy as np
-    import pandas as pd
+
 
     def _hist_bins(series, width):
         s = pd.to_numeric(series, errors="coerce").dropna()
@@ -187,12 +172,12 @@ with tab_single:
 
     # Build the 2x6 layout
     rows_def = [
-        ("dry", "Dry bulb (°C)", dry_c,  "°C"),
-        ("dew", "Dew point (°C)", dew_c,  "°C"),
-        ("rh",  "Relative humidity (%)", rh_c,   "%"),
-        ("ws",  "Wind speed (m/s)", ws_c,   "m/s"),
-        ("ghi", "Global horizontal radiation (W/m²)", ghi_c, "W/m²"),
-        ("prec","Liquid precipitation (mm)", pr_c,  "mm"),
+        ("dry", "Dry bulb (°C)", dry_col,  "°C"),
+        ("dew", "Dew point (°C)", dew_col,  "°C"),
+        ("rh",  "Relative humidity (%)", rh_col,   "%"),
+        ("ws",  "Wind speed (m/s)", ws_col,   "m/s"),
+        ("ghi", "Global horizontal radiation (W/m²)", ghi_col, "W/m²"),
+        ("prec","Liquid precipitation (mm)", pr_col,  "mm"),
     ]
 
     fig = make_subplots(
@@ -235,7 +220,6 @@ with tab_single:
         margin=dict(t=60, r=10, l=60, b=40)
     )
 
-    st.markdown("### Synchronized dashboard")
     st.plotly_chart(fig, use_container_width=True)
 
     # ===== Diurnal & Monthly (use Dry bulb) =====
