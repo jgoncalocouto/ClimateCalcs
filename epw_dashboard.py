@@ -450,161 +450,80 @@ with tab_single:
 # COMPARISON TAB (unchanged from previous adaptive version)
 # =====================================================================================
 with tab_compare:
-    st.subheader("Compare EPWs (up to 5)")
-    multi_select = st.multiselect("Select EPW files", options=epw_names, default=epw_names[:2], max_selections=5, key="cmp_files")
-    if len(multi_select) == 0:
-        st.info("Pick at least one EPW file to compare."); st.stop()
-
-    parsed = []
-    for name in multi_select:
-        path = DATA_DIR / name
-        try:
-            df, loc, stats = parse_one(path)
-            label = label_from_location(loc, Path(name).stem)
-            parsed.append((label, name, df, loc, stats))
-        except Exception as e:
-            st.warning(f"Skipping {name}: {e}")
-
-    if not parsed:
-        st.error("No valid EPWs parsed."); st.stop()
-
-    labels = [p[0] for p in parsed]
-    color_map = make_color_map(labels)
-
-    base_cols = list(parsed[0][2].columns)
-    default_temp = "dry_bulb_temperature" if "dry_bulb_temperature" in base_cols else base_cols[0]
-    temp_candidates = [c for c in base_cols if "temp" in c or c == default_temp] or base_cols
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        sel_temp_c = st.selectbox("Temperature column (°C)", temp_candidates, index=0, key="cmp_temp")
-    with c2:
-        sel_rh_c = st.selectbox("Relative humidity column (%)", [c for c in base_cols if "relative_humidity" in c] or ["(none)"], index=0, key="cmp_rh")
-    with c3:
-        sel_ghi_c = st.selectbox("Global horiz. radiation", [c for c in base_cols if "global_horizontal_radiation" in c] or ["(none)"], index=0, key="cmp_ghi")
-
-    c4, c5 = st.columns(2)
-    with c4:
-        sel_ws_c = st.selectbox("Wind speed column (m/s)", [c for c in base_cols if "wind_speed" in c] or ["(none)"], index=0, key="cmp_ws")
-    with c5:
-        sel_wd_c = st.selectbox("Wind direction column (deg)", [c for c in base_cols if "wind_direction" in c] or ["(none)"], index=0, key="cmp_wd")
-
-    # Comfort model selection for comparison
-    st.markdown("#### Comfort model for comparison")
-    mode_cmp = st.radio("Model", ["Fixed band", "Adaptive (ASHRAE 55)"], horizontal=True, key="comfort_mode_cmp")
-    if mode_cmp == "Fixed band":
-        cc1, cc2, cc3, cc4 = st.columns(4)
-        with cc1: tmin_c = st.number_input("Comfort Tmin (°C)", value=20.0, step=0.5, key="cmp_tmin")
-        with cc2: tmax_c = st.number_input("Comfort Tmax (°C)", value=26.0, step=0.5, key="cmp_tmax")
-        with cc3: rhmin_c = st.number_input("Comfort RH min (%)", value=30.0, step=1.0, key="cmp_rhmin")
-        with cc4: rhmax_c = st.number_input("Comfort RH max (%)", value=60.0, step=1.0, key="cmp_rhmax")
-    else:
-        cc1, cc2, cc3 = st.columns(3)
-        with cc1: accept_c = st.selectbox("Acceptability", ["80", "90"], index=0, key="cmp_accept")
-        with cc2: alpha_c = st.number_input("Running-mean alpha (0–1)", value=0.8, min_value=0.0, max_value=0.99, step=0.05, key="cmp_alpha")
-        with cc3: outdoor_col_c = st.selectbox("Outdoor temp for running mean", [sel_temp_c] + [c for c in base_cols if c != sel_temp_c], index=0, key="cmp_out_col")
-
-    # Global date range
-    global_min = max(p[2].index.min().date() for p in parsed)
-    global_max = min(p[2].index.max().date() for p in parsed)
-    date_range = st.date_input("Date range (applied to all)", value=(global_min, global_max), min_value=global_min, max_value=global_max, key="cmp_dates")
-    if isinstance(date_range, tuple):
-        start_date, end_date = date_range
-    else:
-        start_date, end_date = global_min, date_range
-
-    # KPIs
-    st.markdown("### KPIs per file (filtered range)")
-    kpi_rows = []
-    for label, name, df, loc, stats in parsed:
-        dff = df.loc[(df.index.date >= start_date) & (df.index.date <= end_date)]
-        if sel_temp_c in dff.columns:
-            t = num(dff[sel_temp_c])
-            t_mean, t_min, t_max = t.mean(), t.min(), t.max()
-        else:
-            t_mean = t_min = t_max = np.nan
-        if sel_ghi_c in dff.columns and sel_ghi_c != "(none)":
-            daily = compute_daily_ghi(dff, sel_ghi_c)
-            ghi_avg = daily["kWh/m²·day"].mean()
-        else:
-            ghi_avg = np.nan
-        kpi_rows.append({"Label": label, "Mean temp (°C)": t_mean, "Min temp (°C)": t_min, "Max temp (°C)": t_max, "Avg daily GHI (kWh/m²·day)": ghi_avg})
-    kpi_df = pd.DataFrame(kpi_rows)
-    st.dataframe(kpi_df.style.format({
-        "Mean temp (°C)": "{:.2f}", "Min temp (°C)": "{:.2f}", "Max temp (°C)": "{:.2f}", "Avg daily GHI (kWh/m²·day)": "{:.2f}",
-    }), width="stretch")
-
-    # Temperature time series
-    st.markdown("### Temperature time series")
-    fig = go.Figure()
-    for label, name, df, loc, _ in parsed:
-        dff = df.loc[(df.index.date >= start_date) & (df.index.date <= end_date)]
-        if sel_temp_c in dff.columns:
-            fig.add_trace(go.Scatter(x=dff.index, y=num(dff[sel_temp_c]), mode="lines", name=label, line=dict(color=color_map[label])))
-    fig.update_layout(xaxis_title="Time", yaxis_title="Temperature (°C)")
-    st.plotly_chart(fig, width="stretch")
-
-    # Temperature histogram overlay
-    st.markdown("### Temperature histogram (overlay)")
-    bins = st.slider("Bins", min_value=10, max_value=100, value=40, step=5, key="temp_bins_cmp")
-    fig = go.Figure()
-    for label, name, df, loc, _ in parsed:
-        dff = df.loc[(df.index.date >= start_date) & (df.index.date <= end_date)]
-        if sel_temp_c in dff.columns:
-            fig.add_trace(go.Histogram(x=num(dff[sel_temp_c]).dropna(), nbinsx=bins, name=label, opacity=0.5, marker_color=color_map[label]))
-    fig.update_layout(barmode="overlay", xaxis_title="Temperature (°C)", yaxis_title="Hours")
-    st.plotly_chart(fig, width="stretch")
-
-    # Comfort comparison
-    st.markdown("### Comfort comparison")
-    if mode_cmp == "Fixed band":
-        rows = []
-        for label, name, df, loc, _ in parsed:
-            dff = df.loc[(df.index.date >= start_date) & (df.index.date <= end_date)]
-            rh_s = dff[sel_rh_c] if (sel_rh_c in dff.columns and sel_rh_c != "(none)") else None
-            cm = comfort_mask_fixed(dff[sel_temp_c], rh_s, tmin_c, tmax_c, rhmin_c if rh_s is not None else None, rhmax_c if rh_s is not None else None)
-            pct = (100.0 * cm.mean()) if cm.size else 0.0
-            rows.append({"Label": label, "Comfort %": pct})
-        cmp_df = pd.DataFrame(rows)
-        fig = px.bar(cmp_df, x="Label", y="Comfort %", color="Label", color_discrete_map=color_map, title="Comfort hours (%) by file — Fixed band")
-        fig.update_layout(showlegend=False); st.plotly_chart(fig, width="stretch")
-    else:
-        rows = []
-        for label, name, df, loc, _ in parsed:
-            dff = df.loc[(df.index.date >= start_date) & (df.index.date <= end_date)]
-            out_col = outdoor_col_c if outdoor_col_c in dff.columns else sel_temp_c
-            daily_out = num(dff[out_col]).resample("D").mean()
-            band = adaptive_band_from_outdoor(daily_out, alpha=alpha_c, acceptability=accept_c)
-            cm, _, _ = adaptive_mask_hourly(dff[sel_temp_c], band)
-            pct = (100.0 * cm.mean()) if cm.size else 0.0
-            rows.append({"Label": label, "Comfort %": pct})
-        cmp_df = pd.DataFrame(rows)
-        fig = px.bar(cmp_df, x="Label", y="Comfort %", color="Label", color_discrete_map=color_map, title=f"Comfort hours (%) by file — Adaptive {accept_c}%")
-        fig.update_layout(showlegend=False); st.plotly_chart(fig, width="stretch")
-
-    # Degree-days comparison (unchanged)
-    st.markdown("### Degree-days comparison")
-    c1, c2 = st.columns(2)
-    with c1: base_hdd_c = st.number_input("HDD base (°C)", value=18.0, step=0.5, key="cmp_hdd_base")
-    with c2: base_cdd_c = st.number_input("CDD base (°C)", value=22.0, step=0.5, key="cmp_cdd_base")
-    rows = []
-    for label, name, df, loc, _ in parsed:
-        dff = df.loc[(df.index.date >= start_date) & (df.index.date <= end_date)]
-        if sel_temp_c in dff.columns:
-            hdd = degree_days(dff[sel_temp_c], base_hdd_c, "HDD").sum()
-            cdd = degree_days(dff[sel_temp_c], base_cdd_c, "CDD").sum()
-        else:
-            hdd = cdd = np.nan
-        rows.append({"Label": label, "HDD": hdd, "CDD": cdd})
-    dd_df = pd.DataFrame(rows)
-    c1, c2 = st.columns(2)
-    with c1:
-        fig = px.bar(dd_df, x="Label", y="HDD", color="Label", color_discrete_map=color_map, title="Total HDD (°C·day)")
-        fig.update_layout(showlegend=False); st.plotly_chart(fig, width="stretch")
-    with c2:
-        fig = px.bar(dd_df, x="Label", y="CDD", color="Label", color_discrete_map=color_map, title="Total CDD (°C·day)")
-        fig.update_layout(showlegend=False); st.plotly_chart(fig, width="stretch")
+    st.subheader("Multi-file comparisson")
+    with st.expander("Selection",expanded=True):
+        multi_select = st.multiselect("Select EPW files", options=epw_names, default=epw_names[:2], max_selections=10, key="cmp_files")
+        if len(multi_select) == 0:
+            st.info("Pick at least one EPW file to compare."); st.stop()
     
-    st.caption("End here")
+        parsed = []
+        for name in multi_select:
+            path = DATA_DIR / name
+            try:
+                df, loc, stats = parse_one(path)
+                label = label_from_location(loc, Path(name).stem)
+                parsed.append((label, name, df, loc, stats))
+            except Exception as e:
+                st.warning(f"Skipping {name}: {e}")
+    
+        if not parsed:
+            st.error("No valid EPWs parsed."); st.stop()
+            
+        # Fix colors for each file selected
+        labels = [p[0] for p in parsed]
+        color_map = make_color_map(labels)
+        
+        # Global date range
+        global_min = max(p[2].index.min().date() for p in parsed)
+        global_max = min(p[2].index.max().date() for p in parsed)
+        date_range = st.date_input("Date range (applied to all)", value=(global_min, global_max), min_value=global_min, max_value=global_max, key="cmp_dates")
+        if isinstance(date_range, tuple):
+            start_date, end_date = date_range
+        else:
+            start_date, end_date = global_min, date_range
+    
+    with st.container(border=True):
+        st.markdown("## Timeseries Comparison")
+        base_cols = list(parsed[0][2].columns)
+        sel_col = st.selectbox("Select Column to compare", base_cols, index=0, key="cmp_col")
+        
+        # KPIs
+        with st.container(border=True):
+            st.markdown("### Summary Statistics",)
+            kpi_rows = []
+            for label, name, df, loc, stats in parsed:
+                dff = df.loc[(df.index.date >= start_date) & (df.index.date <= end_date)]
+                if sel_col in dff.columns:
+                    t = num(dff[sel_col])
+                    t_mean, t_min, t_max, t_std, t_count = t.mean(), t.min(), t.max(), t.std(), t.count()
+                else:
+                    t_mean = t_min = t_max = t_std = t_count = np.nan
+                kpi_rows.append({"Label": label, "Mean": t_mean, "Min": t_min, "Max": t_max, "Std": t_std,"Count": t_count})
+            kpi_df = pd.DataFrame(kpi_rows)
+            st.dataframe(kpi_df, width="stretch")
+            
+        # Temperature time series
+        with st.container(border=True):
+            st.markdown("### Line Plot")
+            fig = go.Figure()
+            for label, name, df, loc, _ in parsed:
+                dff = df.loc[(df.index.date >= start_date) & (df.index.date <= end_date)]
+                if sel_col in dff.columns:
+                    fig.add_trace(go.Scatter(x=dff.index, y=num(dff[sel_col]), mode="lines", name=label, line=dict(color=color_map[label])))
+            fig.update_layout(xaxis_title="Time", yaxis_title=sel_col)
+            st.plotly_chart(fig, width="stretch")
+
+        # Temperature histogram overlay
+        with st.container(border=True):
+            st.markdown("### Histogram")
+            bins = st.slider("Bins", min_value=10, max_value=100, value=40, step=5, key="temp_bins_cmp")
+            fig = go.Figure()
+            for label, name, df, loc, _ in parsed:
+                dff = df.loc[(df.index.date >= start_date) & (df.index.date <= end_date)]
+                if sel_col in dff.columns:
+                    fig.add_trace(go.Histogram(x=num(dff[sel_col]).dropna(), nbinsx=bins, name=label, opacity=0.5, marker_color=color_map[label]))
+            fig.update_layout(barmode="overlay", xaxis_title=sel_col, yaxis_title="Hours")
+            st.plotly_chart(fig, width="stretch")
+
 
 st.caption("Built with Streamlit + Ladybug + Plotly — Pro + Adaptive v2")
