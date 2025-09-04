@@ -13,6 +13,29 @@ from fcns import *
 from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="EnergyPlus Weather File Explorer", layout="wide")
+st.markdown(
+    """
+    <style>
+    /* Make the tab labels really big & bold */
+    .stTabs [role="tablist"] button {
+        padding: 1rem 1.5rem !important;      /* taller/wider tabs */
+    }
+    .stTabs [role="tablist"] button p,
+    .stTabs [role="tablist"] button div[data-testid="stMarkdownContainer"] {
+        font-size: 1.6rem !important;        /* bump font size */
+        font-weight: 800 !important;         /* heavy bold */
+        margin: 0 !important;
+        line-height: 1.3 !important;
+    }
+
+    /* Optional: style the active tab */
+    .stTabs [role="tab"][aria-selected="true"] {
+        border-bottom: 4px solid var(--primary-color, #2E86C1) !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 DATA_DIR = Path("data")
 
 # --------------- Helpers ---------------
@@ -50,7 +73,6 @@ epw_names = [p.name for p in epw_paths]
 
 st.title("🌤️ EnergyPLus File Explorer")
 st.caption("Analyzes EPW files existent in a local database.")
-st.subheader("Select analysis type")
 
 tab_single, tab_compare = st.tabs(["📁 Deep Dive analysis", "🆚 Head to Head comparisson"])
 
@@ -229,9 +251,9 @@ with tab_single:
         )
         st.plotly_chart(fig, width="stretch")
 
-    # ===== Diurnal & Monthly (use Dry bulb) =====
+    # ===== 2-D Temperature Bins =====
     with st.container(border=True):
-        # Temperature bins heatmap (Dry bulb) with inverted greyscale (0=white, max=dark)
+        
         with st.container(border=True):
             st.markdown("## Temperature Deep-Dives")
             st.markdown("### Temperature bins — Hour-of-day heatmap (DBT)")
@@ -257,52 +279,72 @@ with tab_single:
                                    pivot.to_csv().encode("utf-8"),
                                    file_name=f"{Path(selected_file).stem}_DBT_2Dhist.csv",
                                    mime="text/csv")
+                
+        # ===== Diurnal & Monthly (Dry bulb & Wet Bulb) =====
+        with st.container(border=True):
+            # Diurnal 
+            # Collect data
+            frames = []
+            if dry_col and dry_col in df.columns:
+                dry = pd.to_numeric(df[dry_col], errors="coerce").dropna()
+                frames.append(pd.DataFrame({"hour": dry.index.hour, "Temperature (°C)": dry, "Type": "Dry bulb"}))
+            if dew_col and dew_col in df.columns:
+                dew = pd.to_numeric(df[dew_col], errors="coerce").dropna()
+                frames.append(pd.DataFrame({"hour": dew.index.hour, "Temperature (°C)": dew, "Type": "Dew point"}))
+            
+            if frames:
+                plot_df = pd.concat(frames, ignore_index=True)
+            
+                fig = px.box(
+                    plot_df,
+                    x="hour", y="Temperature (°C)",
+                    color="Type",  # separates Dry vs Dew
+                    points="outliers",
+                    category_orders={"hour": list(range(24))}
+                )
+            
+                fig.update_layout(
+                    xaxis_title="Hour of day",
+                    yaxis_title="Temperature (°C)",
+                    boxmode="group",  # side-by-side boxes
+                    height=450,
+                    title="Diurnal distribution of temperatures by hour"
+                )
+            
+                st.plotly_chart(fig, use_container_width=True)
 
-        with st.container(border=True):
-            
-            # Compute stats
-            diurnal_dry = diurnal_stats(df[dry_col])
-            diurnal_dew = diurnal_stats(df[dew_col])
-            # Create 1 row × 2 columns layout with shared x-axis
-            fig = make_subplots(rows=1, cols=2, shared_xaxes=True,subplot_titles=("Dry bulb temperature", "Dew point temperature"))
-            # --- Dry bulb traces (left) ---
-            fig.add_trace(go.Scatter(x=diurnal_dry["hour"], y=diurnal_dry["mean"], name="Mean (Dry)", mode="lines+markers"),row=1, col=1)
-            fig.add_trace(go.Scatter(x=diurnal_dry["hour"], y=diurnal_dry["min"], name="Min (Dry)", mode="lines+markers"),row=1, col=1)
-            fig.add_trace(go.Scatter(x=diurnal_dry["hour"], y=diurnal_dry["max"], name="Max (Dry)", mode="lines+markers"),row=1, col=1)
-            # --- Dew point traces (right) ---
-            fig.add_trace(go.Scatter(x=diurnal_dew["hour"], y=diurnal_dew["mean"], name="Mean (Dew)", mode="lines+markers"),row=1, col=2)
-            fig.add_trace(go.Scatter(x=diurnal_dew["hour"], y=diurnal_dew["min"], name="Min (Dew)", mode="lines+markers"),row=1, col=2)
-            fig.add_trace(go.Scatter(x=diurnal_dew["hour"], y=diurnal_dew["max"], name="Max (Dew)", mode="lines+markers"),row=1, col=2)
-            # Layout adjustments
-            fig.update_xaxes(title_text="Hour", row=1, col=1)
-            fig.update_xaxes(title_text="Hour", row=1, col=2)
-            fig.update_yaxes(title_text="Temperature (°C)", row=1, col=1)
-            fig.update_yaxes(title_text="Temperature (°C)", row=1, col=2)
-            fig.update_layout(height=400,width=1000,hovermode="x unified",title="Diurnal profiles (Dry bulb vs Dew point)")
-            st.plotly_chart(fig, width="stretch")
             
         with st.container(border=True):
+            # Monthly
+            # Collect data
+            frames = []
+            if dry_col and dry_col in df.columns:
+                dry = pd.to_numeric(df[dry_col], errors="coerce").dropna()
+                frames.append(pd.DataFrame({"month": dry.index.month, "Temperature (°C)": dry, "Type": "Dry bulb"}))
+            if dew_col and dew_col in df.columns:
+                dew = pd.to_numeric(df[dew_col], errors="coerce").dropna()
+                frames.append(pd.DataFrame({"month": dew.index.month, "Temperature (°C)": dew, "Type": "Dew point"}))
             
-            # Compute stats
-            monthly_dry = monthly_stats(df[dry_col])
-            monthly_dew = monthly_stats(df[dew_col])
-            # Create 1 row × 2 columns layout with shared x-axis
-            fig = make_subplots(rows=1, cols=2, shared_xaxes=True,subplot_titles=("Dry bulb temperature", "Dew point temperature"))
-            # --- Dry bulb traces (left) ---
-            fig.add_trace(go.Scatter(x=monthly_dry["month"], y=monthly_dry["mean"], name="Mean (Dry)", mode="lines+markers"),row=1, col=1)
-            fig.add_trace(go.Scatter(x=monthly_dry["month"], y=monthly_dry["min"], name="Min (Dry)", mode="lines+markers"),row=1, col=1)
-            fig.add_trace(go.Scatter(x=monthly_dry["month"], y=monthly_dry["max"], name="Max (Dry)", mode="lines+markers"),row=1, col=1)
-            # --- Dew point traces (right) ---
-            fig.add_trace(go.Scatter(x=monthly_dew["month"], y=monthly_dew["mean"], name="Mean (Dew)", mode="lines+markers"),row=1, col=2)
-            fig.add_trace(go.Scatter(x=monthly_dew["month"], y=monthly_dew["min"], name="Min (Dew)", mode="lines+markers"),row=1, col=2)
-            fig.add_trace(go.Scatter(x=monthly_dew["month"], y=monthly_dew["max"], name="Max (Dew)", mode="lines+markers"),row=1, col=2)
-            # Layout adjustments
-            fig.update_xaxes(title_text="Month", row=1, col=1)
-            fig.update_xaxes(title_text="Month", row=1, col=2)
-            fig.update_yaxes(title_text="Temperature (°C)", row=1, col=1)
-            fig.update_yaxes(title_text="Temperature (°C)", row=1, col=2)
-            fig.update_layout(height=400,width=1000,hovermode="x unified",title="Monthly values (Dry bulb vs Dew point)")
-            st.plotly_chart(fig, width="stretch")
+            if frames:
+                plot_df = pd.concat(frames, ignore_index=True)
+            
+                fig = px.box(
+                    plot_df,
+                    x="month", y="Temperature (°C)",
+                    color="Type",  # separates Dry vs Dew
+                    points="outliers",
+                    category_orders={"hour": list(range(24))}
+                )
+            
+                fig.update_layout(
+                    xaxis_title="Month of the year",
+                    yaxis_title="Temperature (°C)",
+                    boxmode="group",  # side-by-side boxes
+                    height=450,
+                    title="Monthly distribution of temperatures"
+                )
+            
+                st.plotly_chart(fig, use_container_width=True)
             
 
     
@@ -489,7 +531,7 @@ with tab_compare:
         
         # KPIs
         with st.container(border=True):
-            st.markdown("### Summary Statistics",)
+            st.markdown("### Summary Statistics")
             kpi_rows = []
             for label, name, df, loc, stats in parsed:
                 dff = df.loc[(df.index.date >= start_date) & (df.index.date <= end_date)]
@@ -524,6 +566,171 @@ with tab_compare:
                     fig.add_trace(go.Histogram(x=num(dff[sel_col]).dropna(), nbinsx=bins, name=label, opacity=0.5, marker_color=color_map[label]))
             fig.update_layout(barmode="overlay", xaxis_title=sel_col, yaxis_title="Hours")
             st.plotly_chart(fig, width="stretch")
+        
+    with st.container(border=True):
+        st.markdown("## Time Aggregated Comparison — Box plots")
+    
+        # Pick how to aggregate the x-axis buckets
+        agg_choice = st.selectbox(
+            "Aggregate by",
+            ["Hour", "Day of week", "Month"],  # change labels if you prefer
+            index=0,
+            key="cmp_box_agg"
+        )
+    
+        # Build a tidy table: one row per point, with a 'bucket' column for the x-axis
+        frames = []
+        for label, name, df_i, loc, _ in parsed:
+            dff = df_i.loc[(df_i.index.date >= start_date) & (df_i.index.date <= end_date)]
+            if sel_col in dff.columns:
+                s = pd.to_numeric(dff[sel_col], errors="coerce").dropna()
+                if s.empty:
+                    continue
+    
+                if agg_choice == "Hour":
+                    bucket = s.index.hour
+                    bucket_name = "hour"
+                    cat_order = list(range(24))  # 0..23
+                    bucket_display = bucket  # integers are fine
+                elif agg_choice == "Day of week":
+                    # 0=Mon .. 6=Sun
+                    names = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+                    bucket = s.index.dayofweek
+                    bucket_name = "day"
+                    cat_order = names
+                    bucket_display = pd.Categorical.from_codes(bucket, names, ordered=True)
+                else:  # "Month"
+                    names = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+                    bucket = s.index.month - 1  # 0..11
+                    bucket_name = "month"
+                    cat_order = names
+                    bucket_display = pd.Categorical.from_codes(bucket, names, ordered=True)
+    
+                frames.append(pd.DataFrame({
+                    "bucket": bucket_display,
+                    "value": s.values,
+                    "Type": label,  # must match keys in color_map
+                }))
+    
+        if not frames:
+            st.info("No data available for the selected variable across the chosen files/date range.")
+        else:
+            plot_df = pd.concat(frames, ignore_index=True)
+    
+            fig = px.box(
+                plot_df,
+                x="bucket",
+                y="value",
+                color="Type",                       # one series per file
+                points="outliers",
+                category_orders={"bucket": cat_order},
+                color_discrete_map=color_map        # keep colors coherent
+            )
+            # Axes and title
+            y_unit = "(-)"  # replace with your unit if you have it, e.g. "°C"
+            fig.update_layout(
+                xaxis_title=agg_choice,
+                yaxis_title=f"{sel_col} {y_unit}",
+                boxmode="group",
+                height=450,
+                title=f"Distribution by {agg_choice} — Head-to-Head"
+            )
+            # Nice ticks for hour
+            if agg_choice == "Hour":
+                fig.update_xaxes(tickmode="linear", dtick=1)
+    
+            st.plotly_chart(fig, use_container_width=True)
 
+    with st.container(border=True):
+        st.markdown("## Monthly HDD and CDD")
+        
+        st.markdown("#### Select HDD and CDD calculation base")
+        # If you already defined these elsewhere, remove these two inputs and reuse
+        kc1, kc2 = st.columns(2)
+        with kc1:
+            base_hdd_kpi = st.number_input("HDD base (°C)", value=18.0, step=0.5, key="kpi_base_hdd")
+        with kc2:
+            base_cdd_kpi = st.number_input("CDD base (°C)", value=22.0, step=0.5, key="kpi_base_cdd")
+        
+        with st.container(border=True):
+            st.markdown("### KPI — Total degree-days (HDD / CDD)")
+        
+ 
+        
+            kpi_rows = []
+            for label, name, df_i, loc, _ in parsed:
+                # Filter by the same global date range
+                dff = df_i.loc[(df_i.index.date >= start_date) & (df_i.index.date <= end_date)]
+        
+                if sel_col in dff.columns:
+                    # Use your existing function: returns DAILY degree-days
+                    hdd_daily = degree_days(dff[sel_col], base_hdd_kpi, kind="HDD")
+                    cdd_daily = degree_days(dff[sel_col], base_cdd_kpi, kind="CDD")
+                    hdd_total = float(hdd_daily.sum()) if not hdd_daily.empty else float("nan")
+                    cdd_total = float(cdd_daily.sum()) if not cdd_daily.empty else float("nan")
+                else:
+                    hdd_total = cdd_total = float("nan")
+        
+                kpi_rows.append({
+                    "Label": label,
+                    "HDD (°C·day)": hdd_total,
+                    "CDD (°C·day)": cdd_total,
+                })
+            kpi_df = pd.DataFrame(kpi_rows)
+                
+            
+            # Display table
+            st.dataframe(
+                kpi_df.round({"HDD (°C·day)": 1, "CDD (°C·day)": 1}),
+                use_container_width=True,
+                height=200
+            )
+            
+        st.markdown("### Bar chart — Monthly view (HDD / CDD)")
+        month_names = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+        
+        fig_dd = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=("HDD by month", "CDD by month"),
+            shared_yaxes=False
+        )
+        
+        for label, name, df_i, loc, _ in parsed:
+            dff = df_i.loc[(df_i.index.date >= start_date) & (df_i.index.date <= end_date)]
+            if sel_col not in dff.columns:
+                continue
+        
+            hdd_m = monthly_degree_days(dff[sel_col], base_hdd, "HDD")
+            cdd_m = monthly_degree_days(dff[sel_col], base_cdd, "CDD")
+        
+            fig_dd.add_trace(
+                go.Bar(
+                    x=month_names,
+                    y=hdd_m.values,
+                    name=label,
+                    marker_color=color_map.get(label),
+                    hovertemplate="%{x}<br>HDD: %{y:.1f} °C·day<extra></extra>",
+                ),
+                row=1, col=1
+            )
+            fig_dd.add_trace(
+                go.Bar(
+                    x=month_names,
+                    y=cdd_m.values,
+                    name=label,
+                    marker_color=color_map.get(label),
+                    hovertemplate="%{x}<br>CDD: %{y:.1f} °C·day<extra></extra>",
+                    showlegend=False
+                ),
+                row=1, col=2
+            )
+        
+        fig_dd.update_layout(
+            barmode="group",
+            height=480,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig_dd, use_container_width=True)
+    
 
 st.caption("Built with Streamlit + Ladybug + Plotly — Pro + Adaptive v2")
