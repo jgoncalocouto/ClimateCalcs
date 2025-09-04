@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 import numpy as np
 from plotly.colors import qualitative
 import pandas as pd
+import plotly.graph_objects as go
 
 # ----------------- Ladybug-first loader -----------------
 def parse_with_ladybug(epw_path: str):
@@ -148,6 +149,20 @@ def degree_days(series, base_c, kind="HDD"):
         dd_hourly = np.clip(t - base_c, 0, None)
     dd_daily = dd_hourly.resample("D").sum() / 24.0
     return dd_daily
+
+def monthly_degree_days(series, base_c, kind="HDD"):
+    """Return monthly totals of HDD or CDD using the daily degree_days() function."""
+    # Get daily HDD/CDD
+    dd_daily = degree_days(series, base_c, kind=kind)
+    if dd_daily.empty:
+        return pd.Series(index=range(1, 13), dtype=float).fillna(0.0)
+
+    # Sum by calendar month
+    monthly = dd_daily.groupby(dd_daily.index.month).sum()
+
+    # Ensure all 12 months are present, fill missing with 0
+    monthly = monthly.reindex(range(1, 13), fill_value=0.0)
+    return monthly
 
 def comfort_mask_fixed(temp_series, rh_series, tmin, tmax, rhmin=None, rhmax=None):
     t = num(temp_series)
@@ -277,5 +292,32 @@ def histogram_dataframe(series: pd.Series, width: float, unit: str = "") -> pd.D
     if unit:
         df_out["unit"] = unit
     return df_out
+
+def boxes_by_hour(series, title, unit, row, col, fig):
+    s = pd.to_numeric(series, errors="coerce").dropna()
+    if s.empty:
+        # placeholder so layout remains consistent
+        fig.add_trace(go.Box(y=[], name="no data", boxpoints=False, showlegend=False), row=row, col=col)
+        return
+    hours = s.index.hour
+    for h in range(24):
+        vals = s[hours == h]
+        if vals.size:
+            fig.add_trace(
+                go.Box(
+                    y=vals,
+                    name=str(h),
+                    boxpoints="outliers",
+                    marker_line_width=1,
+                    showlegend=False,
+                ),
+                row=row, col=col
+            )
+        else:
+            # ensure the category exists even if empty (keeps x spacing uniform)
+            fig.add_trace(
+                go.Box(y=[], name=str(h), boxpoints=False, showlegend=False, line=dict(width=0.5)),
+                row=row, col=col
+            )
 
 
