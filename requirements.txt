@@ -45,9 +45,6 @@ MarkupSafe
 matplotlib
 matplotlib-inline
 mdurl
-mkl-fft
-mkl-random
-mkl-service==2.4.0
 more-itertools
 narwhals
 nest-asyncio
