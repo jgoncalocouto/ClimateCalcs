@@ -1,3 +1,4 @@
+import tempfile
 # epw_dashboard_pro_adaptive_v2.py
 # Streamlit + Plotly EPW Explorer — Pro + Adaptive (v2 tweaks for Single tab)
 #
@@ -7,12 +8,126 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import streamlit as st
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 import plotly.express as px
 import plotly.graph_objects as go
 from fcns import *
 from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="EnergyPlus Weather File Explorer", layout="wide")
+
+
+# ==============================
+# Google Drive: setup & helpers
+# ==============================
+if "GDRIVE_FOLDER_ID" not in st.secrets:
+    st.error("Missing secret: GDRIVE_FOLDER_ID in .streamlit/secrets.toml"); st.stop()
+FOLDER_ID = st.secrets["GDRIVE_FOLDER_ID"]
+
+svc_info = None
+if "GOOGLE_SERVICE_ACCOUNT_JSON" in st.secrets:
+    import json as _json_for_secrets
+    svc_info = _json_for_secrets.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+elif "google_service_account" in st.secrets:
+    svc_info = dict(st.secrets["google_service_account"])
+else:
+    st.error("Missing service account config. Add GOOGLE_SERVICE_ACCOUNT_JSON or [google_service_account] to secrets.toml"); st.stop()
+
+_scopes = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
+]
+
+@st.cache_resource(show_spinner=False)
+def _get_drive_service(_svc_info: dict):
+    creds = Credentials.from_service_account_info(_svc_info, scopes=_scopes)
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+_drive = _get_drive_service(svc_info)
+
+def _list_epw_files_drive():
+    q = f"'{FOLDER_ID}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'"
+    files, page_token = [], None
+    while True:
+        res = _drive.files().list(
+            q=q,
+            fields="nextPageToken, files(id, name, size, modifiedTime, mimeType)",
+            pageToken=page_token,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute()
+        files.extend(res.get("files", []))
+        page_token = res.get("nextPageToken")
+        if not page_token:
+            break
+    return [f for f in files if f["name"].lower().endswith(".epw")]
+
+@st.cache_data(show_spinner=False)
+def _download_epw_bytes(file_id: str) -> bytes:
+    req = _drive.files().get_media(fileId=file_id)
+    buf = io.BytesIO()
+    downloader = MediaIoBaseDownload(buf, req)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    return buf.getvalue()
+
+def _upsert_epw_to_drive(filename: str, data: bytes) -> str:
+    safe_name = filename.replace("'", "\'")
+    q = f"'{FOLDER_ID}' in parents and trashed=false and name = '{safe_name}'"
+    res = _drive.files().list(
+        q=q,
+        fields="files(id, name, parents)",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+        pageSize=10,
+    ).execute()
+    files = res.get("files", [])
+
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/octet-stream", resumable=False)
+
+    if files:
+        file_id = files[0]["id"]
+        _drive.files().update(
+            fileId=file_id,
+            media_body=media,
+            supportsAllDrives=True,
+        ).execute()
+        return file_id
+    else:
+        file_metadata = {
+            "name": filename,
+            "parents": [FOLDER_ID],
+        }
+        created = _drive.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id",
+            supportsAllDrives=True,
+        ).execute()
+        return created["id"]
+
+def _parse_selected_from_catalog(name: str, _catalog: dict):
+    item = _catalog[name]
+    # materialize to temp file and parse with existing fcns.parse_one (expects a Path)
+    tmp = tempfile.NamedTemporaryFile(suffix=".epw", delete=False)
+    try:
+        if item["source"] == "uploaded":
+            tmp.write(item["bytes"])
+        else:
+            data = _download_epw_bytes(item["id"])
+            tmp.write(data)
+        tmp.flush(); tmp.close()
+        from fcns import parse_one  # local import to avoid circulars at top
+        return parse_one(Path(tmp.name))
+    finally:
+        try:
+            os.remove(tmp.name)
+        except Exception:
+            pass
+
 st.markdown(
     """
     <style>
@@ -67,10 +182,41 @@ def emit_triplet(cols, start_idx, label, s, unit):
 
 
 
-# --------------- Load files ---------------
-epw_paths = available_epws()
-epw_names = [p.name for p in epw_paths]
 
+# --------------- Load files (Drive + Upload) ---------------
+col_up, col_refresh = st.columns([3,1])
+with col_up:
+    _uploaded = st.file_uploader("Upload EPW files (optional)", type=["epw"], accept_multiple_files=True)
+with col_refresh:
+    if st.button("🔄 Refresh Drive list"):
+        st.cache_data.clear()
+        st.rerun()
+
+if "uploaded_epws" not in st.session_state:
+    st.session_state.uploaded_epws = {}  # name -> bytes
+
+if _uploaded:
+    _save_to_drive = st.toggle("Save uploads to Google Drive", value=True, key="save_drive_toggle")
+    for f in _uploaded:
+        content = f.read()
+        st.session_state.uploaded_epws[f.name] = content
+        if _save_to_drive:
+            try:
+                _upsert_epw_to_drive(f.name, content)
+                st.toast(f"Saved to Drive: {f.name}", icon="✅")
+            except Exception as e:
+                st.warning(f"Could not save '{f.name}' to Drive: {e}")
+
+_drive_files = _list_epw_files_drive()
+_catalog = {}
+for f in _drive_files:
+    _catalog[f["name"]] = {"source": "drive", "id": f["id"], "meta": f}
+for name, b in st.session_state.uploaded_epws.items():
+    _catalog[name] = {"source": "uploaded", "bytes": b, "meta": {"size": len(b)}}
+
+epw_names = sorted(_catalog.keys())
+if not epw_names:
+    st.warning("No EPWs available yet. Upload some or place them in the Drive folder and press Refresh."); st.stop()
 st.title("🌤️ EnergyPLus File Explorer")
 st.caption("Analyzes EPW files existent in a local database.")
 
@@ -83,16 +229,14 @@ with tab_single:
     
     with st.expander("Selection", expanded=True):
     
-        selected_file = st.selectbox("Select EPW file", epw_names, index=0)
-        epw_path = DATA_DIR / selected_file
         
-        with st.spinner("Parsing EPW..."):
+        selected_file = st.selectbox("Select EPW file", epw_names, index=0)
+        with st.spinner("Downloading / Parsing EPW..."):
             try:
-                df, location_dict, df_stats = parse_one(epw_path)
+                df, location_dict, df_stats = _parse_selected_from_catalog(selected_file, _catalog)
             except Exception as e:
                 st.error(f"Failed to parse EPW: {e}"); st.stop()
-        
-        ## Time Filtering
+## Time Filtering
         min_date, max_date = df.index.min().date(), df.index.max().date()
         date_range = st.date_input("Date range", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="single_dates")
         if isinstance(date_range, tuple):
@@ -494,31 +638,30 @@ with tab_single:
 with tab_compare:
     st.subheader("Multi-file comparisson")
     with st.expander("Selection",expanded=True):
-        multi_select = st.multiselect("Select EPW files", options=epw_names, default=epw_names[:2], max_selections=10, key="cmp_files")
-        if len(multi_select) == 0:
-            st.info("Pick at least one EPW file to compare."); st.stop()
+                multi_select = st.multiselect("Select EPW files", options=epw_names, default=epw_names[:2], max_selections=10, key="cmp_files")
+                if len(multi_select) == 0:
+                    st.info("Pick at least one EPW file to compare."); st.stop()
     
+        
         parsed = []
         for name in multi_select:
-            path = DATA_DIR / name
             try:
-                df, loc, stats = parse_one(path)
+                df, loc, stats = _parse_selected_from_catalog(name, _catalog)
                 label = label_from_location(loc, Path(name).stem)
                 parsed.append((label, name, df, loc, stats))
             except Exception as e:
                 st.warning(f"Skipping {name}: {e}")
-    
         if not parsed:
-            st.error("No valid EPWs parsed."); st.stop()
+                    st.error("No valid EPWs parsed."); st.stop()
             
-        # Fix colors for each file selected
-        labels = [p[0] for p in parsed]
-        color_map = make_color_map(labels)
+                # Fix colors for each file selected
+                labels = [p[0] for p in parsed]
+                color_map = make_color_map(labels)
         
-        # Global date range
-        global_min = max(p[2].index.min().date() for p in parsed)
-        global_max = min(p[2].index.max().date() for p in parsed)
-        date_range = st.date_input("Date range (applied to all)", value=(global_min, global_max), min_value=global_min, max_value=global_max, key="cmp_dates")
+                # Global date range
+                global_min = max(p[2].index.min().date() for p in parsed)
+                global_max = min(p[2].index.max().date() for p in parsed)
+                date_range = st.date_input("Date range (applied to all)", value=(global_min, global_max), min_value=global_min, max_value=global_max, key="cmp_dates")
         if isinstance(date_range, tuple):
             start_date, end_date = date_range
         else:

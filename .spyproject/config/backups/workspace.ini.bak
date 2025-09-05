@@ -4,7 +4,7 @@ save_data_on_exit = True
 save_history = True
 save_non_project_files = False
 project_type = 'empty-project-type'
-recent_files = ['main_test.py', 'fcns.py', 'epw_dashboard.py']
+recent_files = ['fcns.py', 'epw_dashboard.py', 'epw_dashboard_gdrive.py']
 
 [main]
 version = 0.2.0
