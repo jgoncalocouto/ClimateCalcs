@@ -11,10 +11,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 from fcns import *
 from plotly.subplots import make_subplots
-import io, os, tempfile
+import io, os, tempfile, zipfile, time
+from urllib.parse import quote
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseUpload
 
 
 st.set_page_config(page_title="EnergyPlus Weather File Explorer", layout="wide")
@@ -132,18 +134,91 @@ def emit_triplet(cols, start_idx, label, s, unit):
 
 # --------------- Load files ---------------
 # Optional uploads
-uploaded = st.file_uploader("Upload EPW files (optional)", type=["epw"], accept_multiple_files=True)
+uploaded = st.file_uploader("Upload EPW files (session-only)", type=["epw"], accept_multiple_files=True)
 if "uploaded_epws" not in st.session_state:
     st.session_state.uploaded_epws = {}   # name -> bytes
 
 if uploaded:
+    # Optional toggle for Drive write-through (OFF by default; requires Shared drive + proper perms)
     for f in uploaded:
-        st.session_state.uploaded_epws[f.name] = f.read()
+        content = f.read()
+        # Keep latest uploaded version by name in session (for precedence in the catalog)
+        st.session_state.uploaded_epws[f.name] = content
 
+# Clear cache + refresh Drive listing
 if st.button("🔄 Refresh Drive list"):
     st.cache_data.clear()
     st.rerun()
 
+# ---- Session-only notice + Email handoff ----
+st.info(
+    "ℹ️ **Uploads are session-only.** They are not persisted to our database.\n\n"
+    "To add custom files to the database, use the **Email** option below to request it from us.",
+    icon="ℹ️",
+)
+
+if st.session_state.get("uploaded_epws"):
+    st.divider()
+    st.markdown("### ✉️ Email handoff (attach files)")
+
+    to_email = st.text_input("Recipient email", value="jgoncalocouto.streamlit.01@gmail.com")
+    names = sorted(st.session_state.uploaded_epws.keys())
+
+    def _build_subject(uploaded_names):
+        today = time.strftime("%Y-%m-%d")
+        return f"EPW files for ClimateCalcs — {len(uploaded_names)} file(s) — {today}"
+
+    def _build_body(uploaded_names):
+        lines = [
+            "Hi team,",
+            "",
+            "Please add the attached EPW files to the database/repo.",
+            "",
+            "Filenames:",
+            *[f" - {n}" for n in uploaded_names],
+            "",
+            "Requested via the dashboard (Email handoff).",
+            "Thanks!"
+        ]
+        return "\n".join(lines)
+
+    def _mailto_link(to_email, subject, body):
+        return f"mailto:{quote(to_email)}?subject={quote(subject)}&body={quote(body)}"
+
+    def _gmail_link(to_email, subject, body):
+        base = "https://mail.google.com/mail/?view=cm&fs=1"
+        return f"{base}&to={quote(to_email)}&su={quote(subject)}&body={quote(body)}"
+
+    subj = _build_subject(names)
+    body = _build_body(names)
+
+    st.markdown(
+    '<div style="color:#FF0000; font-size:24px; font-weight:800; margin:0.5rem 0;">'
+    'README USER: !!! DO NOT FORGET TO ATTACH THE FILES. WE CAN\'T DO IT FOR YOU!!!'
+    '</div>',
+    unsafe_allow_html=True)
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown(f"[Open default mail client]({_mailto_link(to_email, subj, body)})")
+    with col_b:
+        st.link_button("Open Gmail compose", _gmail_link(to_email, subj, body))
+
+    # Provide a ZIP of uploads so the user can attach a single file
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name, data in st.session_state.uploaded_epws.items():
+            zf.writestr(name, data)
+    buf.seek(0)
+    st.download_button(
+        label="Download ZIP of uploaded EPWs",
+        data=buf.read(),
+        file_name=f"epw_uploads_{time.strftime('%Y%m%d_%H%M%S')}.zip",
+        mime="application/zip",
+        help="Download all uploaded EPWs as a single ZIP to attach to your email."
+    )
+
+    st.caption(f"Suggested subject: **{subj}**")
 
 # Build catalog (uploaded overrides drive on name clashes)
 drive_files = _list_epw_files_drive()

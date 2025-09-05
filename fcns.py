@@ -25,6 +25,8 @@ import numpy as np
 from plotly.colors import qualitative
 import pandas as pd
 import plotly.graph_objects as go
+import io
+from googleapiclient.http import MediaIoBaseUpload
 
 # ----------------- Ladybug-first loader -----------------
 def parse_with_ladybug(epw_path: str):
@@ -222,7 +224,7 @@ def adaptive_mask_hourly(temp_series, daily_band_df):
     return (hourly >= lo_hourly) & (hourly <= hi_hourly), lo_hourly, hi_hourly
 
 def dataframe_stats(df):
-    # Simple stats
+    # Simple stats (fixed: return after the loop, not inside it)
     df_stats = {}
     for col in df.columns:
         s = pd.to_numeric(df[col], errors="coerce")
@@ -234,8 +236,8 @@ def dataframe_stats(df):
             "p50": float(s.quantile(0.5)) if s.count() else None,
             "max": float(s.max()) if s.count() else None,
         }
-        return df_stats
-    
+    return df_stats
+
 def find_col_kpi(df, *needles):
     """Return the first df column that contains any of the given substrings (case-insensitive)."""
     available_cols = list(df.columns)
@@ -320,4 +322,64 @@ def boxes_by_hour(series, title, unit, row, col, fig):
                 row=row, col=col
             )
 
+def upsert_epw_to_drive(
+    svc,
+    folder_id: str,
+    filename: str,
+    data: bytes,
+    mimetype: str = "text/plain"
+) -> str:
+    """
+    Create or update `filename` inside the Drive folder `folder_id`.
+    Returns the Drive file ID.
 
+    Args:
+        svc: An authenticated Google Drive service client (from googleapiclient.discovery.build).
+        folder_id (str): ID of the target Google Drive folder.
+        filename (str): Name of the file to create or update.
+        data (bytes): File content to upload.
+        mimetype (str): MIME type of the file. Default is "text/plain".
+
+    Notes:
+        - Exact-name match inside *that folder*.
+        - Handles single quotes in filenames by doubling them for Drive query syntax.
+        - Updates the first match if duplicates exist.
+        - Supports Shared Drives.
+    """
+    # Escape single quotes in filename per Drive query syntax
+    safe_name = filename.replace("'", "''")
+    q = (
+        f"'{folder_id}' in parents and trashed=false "
+        f"and name = '{safe_name}'"
+    )
+
+    res = svc.files().list(
+        q=q,
+        fields="files(id, name, parents)",
+        pageSize=10,
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute()
+    files = res.get("files", []) or []
+
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mimetype, resumable=False)
+
+    if files:
+        # Update the first match
+        file_id = files[0]["id"]
+        svc.files().update(
+            fileId=file_id,
+            media_body=media,
+            supportsAllDrives=True,
+        ).execute()
+        return file_id
+
+    # Otherwise, create new file
+    metadata = {"name": filename, "parents": [folder_id]}
+    created = svc.files().create(
+        body=metadata,
+        media_body=media,
+        fields="id",
+        supportsAllDrives=True,
+    ).execute()
+    return created["id"]
