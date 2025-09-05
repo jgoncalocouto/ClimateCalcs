@@ -1,17 +1,17 @@
-# Core app
-streamlit>=1.30
-pandas>=2.0
-numpy>=1.24
-plotly>=5.15
 
-# Google Drive (service account) client
-google-api-python-client>=2.100.0
-google-auth>=2.20.0
+streamlit>=1.32.0
+pandas>=2.2.0
+numpy>=1.24.0
+plotly>=5.18.0
+
+# Ladybug Tools (EPW parsing)
+ladybug-core>=0.42.15
+
+# Google API client libraries
+google-api-python-client>=2.129.0
+google-auth>=2.27.0
+google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
-httplib2>=0.22.0
 
-# EPW parsing (Ladybug Tools)
-ladybug
-
-# Optional: enable Parquet downloads (comment out if not needed)
-pyarrow>=14.0.0
+# Optional: Parquet export
+pyarrow>=11.0.0
