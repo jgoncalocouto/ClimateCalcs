@@ -19,7 +19,9 @@ from googleapiclient.http import MediaIoBaseDownload
 from googleapiclient.http import MediaIoBaseUpload
 
 
-st.set_page_config(page_title="EnergyPlus Weather File Explorer", layout="wide")
+from pathlib import Path
+logo_path = Path(__file__).parent / "energyplus_logo.png"
+st.set_page_config(page_title="EnergyPlus Weather File Explorer", page_icon=str(logo_path), layout="wide")
 
 # ---- Google Drive setup ----
 if "GDRIVE_FOLDER_ID" not in st.secrets:
@@ -66,6 +68,85 @@ def _list_epw_files_drive():
         if not page_token:
             break
     return [f for f in files if f["name"].lower().endswith(".epw")]
+
+# ---------------- Upload & Email helpers ----------------
+def render_upload(key_prefix: str):
+    uploaded = st.file_uploader(
+        "Add EPW files (available only during your session)",
+        type=["epw"],
+        accept_multiple_files=True,
+        key=f"uploader_{key_prefix}"
+    )
+    if "uploaded_epws" not in st.session_state:
+        st.session_state.uploaded_epws = {}
+    if uploaded:
+        for f in uploaded:
+            st.session_state.uploaded_epws[f.name] = f.read()
+    if st.session_state.get("uploaded_epws"):
+        st.success("Your EPW files were uploaded for this session.")
+        st.caption("They will appear in the selection lists below, alongside the database files.")
+
+def _build_subject(uploaded_names):
+    today = time.strftime("%Y-%m-%d")
+    return f"EPW files for ClimateCalcs — {len(uploaded_names)} file(s) — {today}"
+
+def _build_body(uploaded_names):
+    lines = [
+        "Hi team,",
+        "",
+        "Please add the attached EPW files to the database/repo.",
+        "",
+        "Filenames:",
+        *[f" - {n}" for n in uploaded_names],
+        "",
+        "Requested via the dashboard (Email handoff).",
+        "Thanks!"
+    ]
+    return "\n".join(lines)
+
+def _mailto_link(to_email, subject, body):
+    return f"mailto:{quote(to_email)}?subject={quote(subject)}&body={quote(body)}"
+
+def render_email_handoff(key_prefix: str):
+    if not st.session_state.get("uploaded_epws"):
+        return
+    with st.expander("✉️ Want to add them to the shared database?", expanded=False):
+        st.info(
+            "⚠️ Direct uploads to Google Drive aren't supported from this app.\n\n"
+            "Please send them by email and attach the files. We'll add them on our side."
+        )
+        to_email = st.text_input("Recipient", value="jgoncalocouto.streamlit.01@gmail.com", key=f"email_to_{key_prefix}")
+        names = sorted(st.session_state.uploaded_epws.keys())
+        subj = _build_subject(names)
+        body = _build_body(names)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.link_button("📧 Open default mail client", _mailto_link(to_email, subj, body))
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for name, data in st.session_state.uploaded_epws.items():
+                zf.writestr(name, data)
+        buf.seek(0)
+        with c2:
+            st.markdown('<span style="color:red; font-weight:bold;">⚠️ You need to attach the files manually</span>', unsafe_allow_html=True)
+            st.download_button(
+                label="⬇️ Download ZIP of uploaded EPWs",
+                data=buf.read(),
+                file_name=f"epw_uploads_{time.strftime('%Y%m%d_%H%M%S')}.zip",
+                mime="application/zip",
+                help="Download all uploaded EPWs as a single ZIP to attach to your email."
+            )
+        st.caption(f"Suggested subject: **{subj}**")
+
+def build_catalog():
+    drive_files = _list_epw_files_drive()
+    catalog = {}
+    for f in drive_files:
+        catalog[f["name"]] = {"source": "drive", "id": f["id"], "meta": f}
+    for name, b in st.session_state.get("uploaded_epws", {}).items():
+        catalog[name] = {"source": "uploaded", "bytes": b, "meta": {"size": len(b)}}
+    return catalog
+
 
 @st.cache_data(show_spinner=False)
 def _download_epw_bytes(file_id: str) -> bytes:
@@ -132,101 +213,25 @@ def emit_triplet(cols, start_idx, label, s, unit):
 
 
 
-# --------------- Load files ---------------
-# Optional uploads
-uploaded = st.file_uploader("Want to add your own files? (They will be available only during your session)", type=["epw"], accept_multiple_files=True)
-if "uploaded_epws" not in st.session_state:
-    st.session_state.uploaded_epws = {}   # name -> bytes
+import base64
 
-if uploaded:
-    # Optional toggle for Drive write-through (OFF by default; requires Shared drive + proper perms)
-    for f in uploaded:
-        content = f.read()
-        # Keep latest uploaded version by name in session (for precedence in the catalog)
-        st.session_state.uploaded_epws[f.name] = content
+def _img_data_uri(path: str) -> str:
+    with open(path, "rb") as f:
+        return "data:image/png;base64," + base64.b64encode(f.read()).decode("utf-8")
 
-if st.session_state.get("uploaded_epws"):
-    st.divider()
-    st.markdown("### Your epw were successfully uploaded to the session")
-    st.info(
-        "Your files are available from the Selection pane, together with all other files from our database.\n\n"
-        "Enjoy!"
-    )
-    st.markdown("### ✉️ Want to add more files to the app database?")
-    st.info(
-        "⚠️ We’re sorry — direct uploads to Google Drive are not supported from this app.\n\n"
-        "If you’d like your files to be added to the database, please send them by email instead."
-    )
-    to_email = st.text_input("Send us en email", value="jgoncalocouto.streamlit.01@gmail.com")
-    names = sorted(st.session_state.uploaded_epws.keys())
+_logo_uri = _img_data_uri("energyplus_logo.png")
 
-    def _build_subject(uploaded_names):
-        today = time.strftime("%Y-%m-%d")
-        return f"EPW files for ClimateCalcs — {len(uploaded_names)} file(s) — {today}"
-
-    def _build_body(uploaded_names):
-        lines = [
-            "Hi team,",
-            "",
-            "Please add the attached EPW files to the database/repo.",
-            "",
-            "Filenames:",
-            *[f" - {n}" for n in uploaded_names],
-            "",
-            "Requested via the dashboard (Email handoff).",
-            "Thanks!"
-        ]
-        return "\n".join(lines)
-
-    def _mailto_link(to_email, subject, body):
-        return f"mailto:{quote(to_email)}?subject={quote(subject)}&body={quote(body)}"
-
-    def _gmail_link(to_email, subject, body):
-        base = "https://mail.google.com/mail/?view=cm&fs=1"
-        return f"{base}&to={quote(to_email)}&su={quote(subject)}&body={quote(body)}"
-
-    subj = _build_subject(names)
-    body = _build_body(names)
-    
-    c1,c2=st.columns(2)
-    with c1:
-        st.link_button("📧 Open default mail client", _mailto_link(to_email, subj, body))
-
-    # Provide a ZIP of uploads so the user can attach a single file
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for name, data in st.session_state.uploaded_epws.items():
-            zf.writestr(name, data)
-    buf.seek(0)
-    with c2:
-        st.markdown(
-            '<span style="color:red; font-weight:bold;">⚠️ You need to attach the files manually</span>',
-            unsafe_allow_html=True
-        )
-        
-        st.download_button(
-            label="⬇️ Download ZIP of uploaded EPWs",
-            data=buf.read(),
-            file_name=f"epw_uploads_{time.strftime('%Y%m%d_%H%M%S')}.zip",
-            mime="application/zip",
-            help="Download all uploaded EPWs as a single ZIP to attach to your email."
-        )
-
-    st.caption(f"Suggested subject: **{subj}**")
-
-# Build catalog (uploaded overrides drive on name clashes)
-drive_files = _list_epw_files_drive()
-catalog = {}
-for f in drive_files:
-    catalog[f["name"]] = {"source": "drive", "id": f["id"], "meta": f}
-for name, b in st.session_state.uploaded_epws.items():
-    catalog[name] = {"source": "uploaded", "bytes": b, "meta": {"size": len(b)}}
-
-epw_names = sorted(catalog.keys())
-
-st.title("🌤️ EnergyPlus File Explorer")
-st.caption("Reads EPWs from Google Drive (and optional uploads).")
-
+st.markdown(
+    f"""
+    <div style="display:flex;align-items:center;gap:10px;">
+      <img src="{_logo_uri}" width="80" alt="EnergyPlus logo"/>
+      <h1 style="margin:0;">EnergyPlus File Explorer</h1>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+st.caption("Analysis and comparison of EnergyPlus Weather files.")
+st.caption("You can either check out the files we have on the database (exported from EnergyPlus website) or upload your own.")
 tab_single, tab_compare = st.tabs(["📁 Deep Dive analysis", "🆚 Head to Head comparisson"])
 
 # =====================================================================================
@@ -258,8 +263,14 @@ with tab_single:
     
     with st.expander("Selection", expanded=True):
     
-        selected_file = st.selectbox("Select EPW file", epw_names, index=0)
+        catalog = build_catalog()
+        epw_names = sorted(catalog.keys())
         
+        selected_file = st.selectbox("Select EPW file", epw_names, index=0)
+        render_upload('single')
+
+        
+        render_email_handoff('single')
         with st.spinner("Downloading/Parsing EPW..."):
             try:
                 df, location_dict, df_stats = _parse_selected(selected_file)
@@ -668,7 +679,13 @@ with tab_single:
 with tab_compare:
     st.subheader("Multi-file comparisson")
     with st.expander("Selection",expanded=True):
+        
+        catalog = build_catalog()
+        epw_names = sorted(catalog.keys())
+
         multi_select = st.multiselect("Select EPW files", options=epw_names, default=epw_names[:2], max_selections=10, key="cmp_files")
+        render_upload('compare')
+        render_email_handoff('compare')
         if len(multi_select) == 0:
             st.info("Pick at least one EPW file to compare."); st.stop()
     
@@ -1076,3 +1093,48 @@ with tab_compare:
     
 
 st.caption("Built with Streamlit + Ladybug + Plotly — Pro + Adaptive v2")
+
+
+# --- Floating "Buy me a coffee" button (bottom-right) ---
+COFFEE_URL = "https://paypal.me/jgoncalocouto/1"
+
+FLOATING_HTML = f"""
+<style>
+  #fixed-coffee {{
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 9999;
+  }}
+  #fixed-coffee a {{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 128px;
+    height: 128px;
+    border-radius: 999px;
+    background: #ff813f;
+    color: #ffffff !important;
+    text-decoration: none;
+    box-shadow: 0 8px 20px rgba(0,0,0,.25);
+    font-size: 52px;
+    line-height: 1;
+    transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+    opacity: 0.95;
+  }}
+  #fixed-coffee a:hover {{
+    transform: translateY(-2px);
+    box-shadow: 0 12px 28px rgba(0,0,0,.28);
+    opacity: 1;
+  }}
+  @media (max-width: 640px) {{
+    #fixed-coffee {{ bottom: 80px; right: 32px; }}
+  }}
+</style>
+
+<div id="fixed-coffee">
+  <a href="{COFFEE_URL}" target="_blank" rel="noopener" title="Buy me a coffee">☕</a>
+</div>
+"""
+
+st.markdown(FLOATING_HTML, unsafe_allow_html=True)
