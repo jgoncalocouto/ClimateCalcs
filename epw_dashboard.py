@@ -10,6 +10,7 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 from fcns import *
+from coffee_widget import add_buy_me_a_coffee
 from plotly.subplots import make_subplots
 import io, os, tempfile, zipfile, time
 from urllib.parse import quote
@@ -1096,45 +1097,4 @@ st.caption("Built with Streamlit + Ladybug + Plotly — Pro + Adaptive v2")
 
 
 # --- Floating "Buy me a coffee" button (bottom-right) ---
-COFFEE_URL = "https://paypal.me/jgoncalocouto/1"
-
-FLOATING_HTML = f"""
-<style>
-  #fixed-coffee {{
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    z-index: 9999;
-  }}
-  #fixed-coffee a {{
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 128px;
-    height: 128px;
-    border-radius: 999px;
-    background: #ff813f;
-    color: #ffffff !important;
-    text-decoration: none;
-    box-shadow: 0 8px 20px rgba(0,0,0,.25);
-    font-size: 52px;
-    line-height: 1;
-    transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
-    opacity: 0.95;
-  }}
-  #fixed-coffee a:hover {{
-    transform: translateY(-2px);
-    box-shadow: 0 12px 28px rgba(0,0,0,.28);
-    opacity: 1;
-  }}
-  @media (max-width: 640px) {{
-    #fixed-coffee {{ bottom: 80px; right: 32px; }}
-  }}
-</style>
-
-<div id="fixed-coffee">
-  <a href="{COFFEE_URL}" target="_blank" rel="noopener" title="Buy me a coffee">☕</a>
-</div>
-"""
-
-st.markdown(FLOATING_HTML, unsafe_allow_html=True)
+add_buy_me_a_coffee()
